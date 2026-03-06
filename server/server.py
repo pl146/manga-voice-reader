@@ -27,11 +27,11 @@ MAX_DETECT_WIDTH = 1280
 MAX_BOXES = 60
 IOU_MERGE_THRESHOLD = 0.45
 PROXIMITY_MERGE_RATIO = 2.0  # merge boxes within 2x avg height horizontally
-MIN_BOX_AREA = 400
-MIN_BOX_SIDE = 12
-MAX_ASPECT_RATIO = 15.0
-MIN_DET_SCORE = 0.3
-LOW_BOX_THRESHOLD = 5  # if fewer boxes, run inverted pass
+MIN_BOX_AREA = 300
+MIN_BOX_SIDE = 10
+MAX_ASPECT_RATIO = 18.0
+MIN_DET_SCORE = 0.15
+LOW_BOX_THRESHOLD = 8  # if fewer boxes, run enhanced detection passes
 CROP_PAD_X = 25  # horizontal padding around each box crop for Vision OCR
 CROP_PAD_Y = 10  # vertical padding around each box crop for Vision OCR
 VISION_BATCH_SIZE = 16  # Google Vision max per batch call
@@ -68,9 +68,9 @@ def load_detector():
         'use_textline_orientation': False,
         'use_doc_orientation_classify': False,
         'use_doc_unwarping': False,
-        'text_det_thresh': 0.25,
-        'text_det_box_thresh': 0.4,
-        'text_det_unclip_ratio': 1.8,
+        'text_det_thresh': 0.15,
+        'text_det_box_thresh': 0.25,
+        'text_det_unclip_ratio': 2.0,
         'text_det_limit_side_len': MAX_DETECT_WIDTH,
     }
     if has_model:
@@ -234,6 +234,37 @@ def cv2_to_png_bytes(img):
     _, buf = cv2.imencode('.png', img)
     return buf.tobytes()
 
+# ─── Preprocessing for detection ────────────────────────────────────────
+
+def preprocess_for_detection(img):
+    """Enhance image for better text detection on manga pages.
+    Converts to grayscale, boosts contrast, sharpens edges,
+    then converts back to BGR for PaddleOCR."""
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    # CLAHE adaptive contrast enhancement
+    clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+    enhanced = clahe.apply(gray)
+
+    # Sharpen edges to make text boundaries crisp
+    blurred = cv2.GaussianBlur(enhanced, (0, 0), sigmaX=1.0)
+    sharpened = cv2.addWeighted(enhanced, 1.5, blurred, -0.5, 0)
+
+    # Convert back to BGR (PaddleOCR expects 3-channel)
+    return cv2.cvtColor(sharpened, cv2.COLOR_GRAY2BGR)
+
+
+def make_high_contrast_crop(crop_img):
+    """Create a high-contrast version of a crop for OCR retry.
+    Used when Vision returns empty on a region that likely has text."""
+    gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
+    # Adaptive threshold isolates text from background
+    binary = cv2.adaptiveThreshold(
+        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY, blockSize=15, C=8
+    )
+    return cv2.cvtColor(binary, cv2.COLOR_GRAY2BGR)
+
 # ─── Detection ──────────────────────────────────────────────────────────────
 
 def run_detection(img):
@@ -265,13 +296,28 @@ def run_detection(img):
                               'score': score})
     return boxes
 
-def detect_with_inversion_fallback(img):
-    """Detect text boxes. If too few found, also detect on inverted image and merge."""
+def detect_with_fallbacks(img):
+    """Detect text boxes with multiple passes to maximize recall.
+    Pass 1: original image
+    Pass 2: preprocessed (contrast + sharpen) if too few boxes
+    Pass 3: inverted image if still too few boxes
+    All results are merged by IoU to avoid duplicates."""
     t0 = time.time()
+
+    # Pass 1: original
     boxes = run_detection(img)
     normal_count = len(boxes)
+    preproc_count = 0
     inv_count = 0
 
+    # Pass 2: preprocessed (contrast-enhanced + sharpened)
+    if len(boxes) < LOW_BOX_THRESHOLD:
+        enhanced = preprocess_for_detection(img)
+        enh_boxes = run_detection(enhanced)
+        preproc_count = len(enh_boxes)
+        boxes = merge_box_lists(boxes, enh_boxes)
+
+    # Pass 3: inverted (white text on dark backgrounds)
     if len(boxes) < LOW_BOX_THRESHOLD:
         inverted = cv2.bitwise_not(img)
         inv_boxes = run_detection(inverted)
@@ -279,8 +325,8 @@ def detect_with_inversion_fallback(img):
         boxes = merge_box_lists(boxes, inv_boxes)
 
     det_ms = int((time.time() - t0) * 1000)
-    log.info(f'Detection: {normal_count} normal + {inv_count} inverted = {len(boxes)} merged ({det_ms}ms)')
-    return boxes, det_ms, inv_count > 0
+    log.info(f'Detection: {normal_count} normal + {preproc_count} enhanced + {inv_count} inverted = {len(boxes)} merged ({det_ms}ms)')
+    return boxes, det_ms, preproc_count > 0 or inv_count > 0
 
 # ─── Box merging and filtering ──────────────────────────────────────────────
 
@@ -407,18 +453,18 @@ def merge_vertical_stack(boxes):
                 bx1, bx2 = b['x'], b['x'] + b['w']
                 overlap_x = min(cx2, bx2) - max(cx1, bx1)
                 min_w = min(current['w'], b['w'])
-                if min_w <= 0 or overlap_x < min_w * 0.3:
+                if min_w <= 0 or overlap_x < min_w * 0.2:
                     continue
-                # Vertical gap must be small: within 0.8x the SMALLER box's height
+                # Vertical gap must be small: within 1.2x the SMALLER box's height
                 small_h = min(current['h'], b['h'])
                 gap_y = max(0,
                     max(b['y'] - (current['y'] + current['h']),
                         current['y'] - (b['y'] + b['h'])))
-                if gap_y > small_h * 0.8:
+                if gap_y > small_h * 1.2:
                     continue
                 # Width ratio check: don't merge a tiny box into a huge one
                 max_w = max(current['w'], b['w'])
-                if min_w < max_w * 0.2:
+                if min_w < max_w * 0.15:
                     continue
                 current = merge_two_boxes(current, b)
                 used.add(j)
@@ -820,7 +866,7 @@ def process():
         det_img = cropped
 
     # 4. Run detection with inversion fallback
-    boxes, det_ms, used_inversion = detect_with_inversion_fallback(det_img)
+    boxes, det_ms, used_inversion = detect_with_fallbacks(det_img)
 
     # 5. Scale boxes back to original crop coordinates
     if det_scale != 1.0:
@@ -886,9 +932,31 @@ def process():
     log.info(f'Cropped {len(crops_bytes)} regions for Vision OCR')
     ocr_texts = batch_vision_ocr(crops_bytes)
     ocr_ms = int((time.time() - t0) * 1000)
-    log.info(f'Vision OCR: {ocr_ms}ms')
+    vision_empty = sum(1 for t in ocr_texts if not t.strip())
+    vision_filled = len(ocr_texts) - vision_empty
+    log.info(f'Vision OCR: {vision_filled}/{len(ocr_texts)} returned text ({ocr_ms}ms)')
 
-    # 7b. Local recognizer fallback (if enabled and Vision returned empty)
+    # 7b. Retry empty results with high-contrast version of crop
+    empty_indices = [i for i, t in enumerate(ocr_texts) if not t.strip()]
+    if empty_indices:
+        hc_bytes = []
+        for idx in empty_indices:
+            if crops_imgs[idx] is not None:
+                hc_img = make_high_contrast_crop(crops_imgs[idx])
+                hc_bytes.append(cv2_to_png_bytes(hc_img))
+            else:
+                hc_bytes.append(b'')
+        hc_texts = batch_vision_ocr(hc_bytes)
+        retry_count = 0
+        for idx, hc_text in zip(empty_indices, hc_texts):
+            if hc_text.strip():
+                ocr_texts[idx] = hc_text
+                retry_count += 1
+                log.info(f'  Box {idx}: high-contrast retry recovered: "{hc_text[:50]}"')
+        if retry_count:
+            log.info(f'High-contrast retry recovered {retry_count}/{len(empty_indices)} empty boxes')
+
+    # 7d. Local recognizer fallback (if enabled and still empty)
     if local_recognizer:
         empty_indices = [i for i, t in enumerate(ocr_texts) if not t.strip()]
         if empty_indices:
@@ -942,7 +1010,8 @@ def process():
     log.info(f'Debug image saved: {debug_path}')
 
     total_ms = int((time.time() - t_start) * 1000)
-    log.info(f'Result: {len(bubbles)} bubbles in {total_ms}ms')
+    ocr_returned = sum(1 for t in ocr_texts if t.strip())
+    log.info(f'Pipeline summary: {len(boxes)} detected -> {ocr_returned} OCR results -> {len(bubbles)} bubbles ({total_ms}ms)')
     for i, b in enumerate(bubbles):
         log.info(f'  [{i+1}] {b["text"][:60]}')
 
@@ -957,8 +1026,9 @@ def process():
             'merge_ms': merge_ms,
             'ocr_ms': ocr_ms,
             'boxes_detected': len(boxes),
+            'ocr_returned': ocr_returned,
             'bubbles_returned': len(bubbles),
-            'used_inversion': used_inversion,
+            'used_fallbacks': used_inversion,
         }
     })
 
