@@ -479,6 +479,55 @@ def cleanup_text(text):
 
     return text
 
+# ─── Speech normalization ──────────────────────────────────────────────────
+
+def prepare_text_for_speech(text):
+    """Normalize OCR text for natural-sounding TTS output.
+    Runs after cleanup_text(). Does not modify coordinates."""
+    if not text:
+        return ''
+
+    # 1. Replace internal line breaks with spaces (OCR splits across lines)
+    text = re.sub(r'\n+', ' ', text)
+
+    # 2. Join spaced single letters: "H E L L O" -> "HELLO"
+    #    Match 3+ single letters separated by spaces to avoid false positives
+    def merge_spaced(m):
+        return m.group(0).replace(' ', '')
+    text = re.sub(r'(?<!\w)([A-Za-z]) ([A-Za-z])(?: ([A-Za-z]))+(?!\w)', merge_spaced, text)
+    # Catch remaining pairs at word boundaries
+    text = re.sub(r'(?<!\w)([A-Za-z]) ([A-Za-z])(?!\w)', r'\1\2', text)
+
+    # 3. Remove duplicated adjacent words: "I I LOST" -> "I LOST"
+    text = re.sub(r'\b(\w+)(\s+\1)+\b', r'\1', text, flags=re.IGNORECASE)
+
+    # 4. Fix slash-as-L errors (skip numeric fractions like 1/2)
+    text = re.sub(r'([a-zA-Z])/([a-zA-Z])', r'\1l\2', text)
+    text = re.sub(r'([a-zA-Z])/$', r'\1l', text)
+    text = re.sub(r'([a-zA-Z])led\b', r'\1lled', text)
+
+    # 5. Remove noise tokens (pure symbols or repeated punctuation)
+    text = re.sub(r'(?<!\w)[=|_~#*]{2,}(?!\w)', '', text)
+    # Remove tokens that are only punctuation/symbols (not numbers)
+    text = re.sub(r'(?<=\s)[^\w\s]{3,}(?=\s|$)', '', text)
+
+    # 6. Normalize repeated punctuation: "!!!" -> "!", "???" -> "?", "..." stays
+    text = re.sub(r'!{2,}', '!', text)
+    text = re.sub(r'\?{2,}', '?', text)
+    text = re.sub(r'\.{4,}', '...', text)
+
+    # 7. Ensure sentence-ending punctuation for natural pauses
+    text = text.strip()
+    if text and text[-1] not in '.!?':
+        text += '.'
+
+    # 8. Numbers are preserved (no modification needed, regex above skips them)
+
+    # 9. Final whitespace cleanup
+    text = re.sub(r'\s+', ' ', text).strip()
+
+    return text
+
 # ─── Reading order ──────────────────────────────────────────────────────────
 
 def sort_reading_order(bubbles):
@@ -630,11 +679,12 @@ def process():
     ocr_ms = int((time.time() - t0) * 1000)
     log.info(f'Vision OCR: {ocr_ms}ms')
 
-    # 8. Build bubbles with Vision text
+    # 8. Build bubbles with Vision text -> cleanup -> speech normalization
     bubbles = []
     for i, b in enumerate(boxes):
         raw_text = ocr_texts[i] if i < len(ocr_texts) else ''
         text = cleanup_text(raw_text)
+        text = prepare_text_for_speech(text)
         if not text or len(text) < 2:
             continue
         bubbles.append({
