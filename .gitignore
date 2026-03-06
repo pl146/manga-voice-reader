@@ -1,0 +1,9 @@
+server/venv/
+server/credentials.json
+server/debug_last.jpg
+server/models/production_detector/
+server/models/baseline_detector/
+server/models/runs/
+node_modules/
+.vercel/
+.DS_Store
