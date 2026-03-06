@@ -71,10 +71,8 @@ def load_detector():
         kwargs['text_detection_model_dir'] = model_dir
         log.info(f'Loading custom detector from {model_dir}')
     else:
-        # Use mobile models for speed (server models are too slow on CPU)
         kwargs['text_detection_model_name'] = 'PP-OCRv4_mobile_det'
-        kwargs['text_recognition_model_name'] = 'PP-OCRv4_mobile_rec'
-        log.info('Using PP-OCRv4 mobile detector for speed')
+        log.info('Using PP-OCRv4 mobile detector (detection only, Vision for OCR)')
 
     ocr_engine = PaddleOCR(**kwargs)
     log.info('Detector loaded.')
@@ -87,11 +85,11 @@ def load_vision():
     global vision_client
     creds_path = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS', '')
     if not creds_path or not os.path.isfile(creds_path):
-        log.warning(
+        log.error(
             'GOOGLE_APPLICATION_CREDENTIALS not set or file not found. '
-            'Google Vision OCR will not work. Set it to your service account JSON path.'
+            'Google Vision OCR is REQUIRED. Set it to your service account JSON path.'
         )
-        return
+        raise RuntimeError('Google Vision credentials not configured')
     vision_client = vision.ImageAnnotatorClient()
     log.info('Google Vision client loaded.')
 
@@ -114,7 +112,7 @@ def cv2_to_png_bytes(img):
 # ─── Detection ──────────────────────────────────────────────────────────────
 
 def run_detection(img):
-    """Run PaddleOCR detection + recognition. Returns list of {x,y,w,h,score,text}."""
+    """Run PaddleOCR detection only. Returns list of {x,y,w,h,score}."""
     results = ocr_engine.predict(img)
     boxes = []
     if not results:
@@ -123,15 +121,13 @@ def run_detection(img):
     for r in results:
         res = r.json.get('res', {})
         dt_polys = res.get('dt_polys', [])
-        rec_scores = res.get('rec_scores', [])
-        rec_texts = res.get('rec_texts', [])
+        det_scores = res.get('rec_scores', [])
 
         for i, poly in enumerate(dt_polys):
             points = np.array(poly)
             if points.shape[0] < 4:
                 continue
-            score = rec_scores[i] if i < len(rec_scores) else 1.0
-            text = rec_texts[i] if i < len(rec_texts) else ''
+            score = det_scores[i] if i < len(det_scores) else 1.0
 
             x_min = int(np.min(points[:, 0]))
             y_min = int(np.min(points[:, 1]))
@@ -141,7 +137,7 @@ def run_detection(img):
             h = y_max - y_min
             if w > 0 and h > 0:
                 boxes.append({'x': x_min, 'y': y_min, 'w': w, 'h': h,
-                              'score': score, 'text': text})
+                              'score': score})
     return boxes
 
 def detect_with_inversion_fallback(img):
@@ -178,21 +174,15 @@ def box_iou(a, b):
     return inter / union if union > 0 else 0.0
 
 def merge_two_boxes(a, b):
-    """Merge two boxes into their bounding union, concatenating text."""
-    # Sort by Y position so text reads top-to-bottom
-    top, bot = (a, b) if a['y'] <= b['y'] else (b, a)
+    """Merge two boxes into their bounding union."""
     x1 = min(a['x'], b['x'])
     y1 = min(a['y'], b['y'])
     x2 = max(a['x'] + a['w'], b['x'] + b['w'])
     y2 = max(a['y'] + a['h'], b['y'] + b['h'])
-    text_a = top.get('text', '')
-    text_b = bot.get('text', '')
-    merged_text = (text_a + ' ' + text_b).strip() if text_a or text_b else ''
     return {
         'x': x1, 'y': y1,
         'w': x2 - x1, 'h': y2 - y1,
         'score': max(a.get('score', 1), b.get('score', 1)),
-        'text': merged_text,
     }
 
 def merge_box_lists(boxes1, boxes2):
@@ -586,7 +576,7 @@ def process():
     t0 = time.time()
     log.info(f'Raw boxes ({len(boxes)}):')
     for i, b in enumerate(boxes):
-        log.info(f'  raw[{i}] {b["x"]},{b["y"]} {b["w"]}x{b["h"]} score={b.get("score",0):.2f} "{b.get("text","")[:40]}"')
+        log.info(f'  raw[{i}] {b["x"]},{b["y"]} {b["w"]}x{b["h"]} score={b.get("score",0):.2f}')
     boxes = merge_overlapping(boxes, IOU_MERGE_THRESHOLD)
     log.info(f'After overlap merge: {len(boxes)}')
     boxes = merge_same_line(boxes)
@@ -594,26 +584,17 @@ def process():
     boxes = merge_vertical_stack(boxes)
     log.info(f'After vertical merge: {len(boxes)}')
     for i, b in enumerate(boxes):
-        log.info(f'  merged[{i}] {b["x"]},{b["y"]} {b["w"]}x{b["h"]} "{b.get("text","")[:50]}"')
+        log.info(f'  merged[{i}] {b["x"]},{b["y"]} {b["w"]}x{b["h"]}')
     boxes = filter_boxes(boxes)
     log.info(f'After filter: {len(boxes)}')
     boxes = cap_boxes(boxes, MAX_BOXES)
     merge_ms = int((time.time() - t0) * 1000)
     log.info(f'Final: {len(boxes)} boxes ({merge_ms}ms)')
 
-    # Save debug image with boxes drawn
-    debug_img = cropped.copy()
-    for i, b in enumerate(boxes):
-        color = [(0, 0, 255), (255, 0, 0), (0, 255, 0), (0, 255, 255), (255, 0, 255)][i % 5]
-        cv2.rectangle(debug_img, (b['x'], b['y']), (b['x'] + b['w'], b['y'] + b['h']), color, 3)
-        label = b.get('text', '')[:30]
-        cv2.putText(debug_img, f'{i+1}: {label}', (b['x'], b['y'] - 8),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
-    debug_path = os.path.join(os.path.dirname(__file__), 'debug_last.jpg')
-    cv2.imwrite(debug_path, debug_img, [cv2.IMWRITE_JPEG_QUALITY, 85])
-    log.info(f'Debug image saved: {debug_path}')
-
     if len(boxes) == 0:
+        # Save debug image even with no boxes
+        debug_path = os.path.join(os.path.dirname(__file__), 'debug_last.jpg')
+        cv2.imwrite(debug_path, cropped, [cv2.IMWRITE_JPEG_QUALITY, 85])
         return jsonify({
             'bubbles': [],
             'actualCropLeft': actual_crop_left / dpr,
@@ -625,17 +606,36 @@ def process():
                 'merge_ms': merge_ms,
                 'ocr_ms': 0,
                 'boxes_detected': 0,
-                'boxes_after_filter': 0,
                 'bubbles_returned': 0,
                 'used_inversion': used_inversion,
             }
         })
 
-    # 7. Build bubbles using PaddleOCR text (no Google Vision needed)
-    bubbles = []
+    # 7. Crop each detected box and send to Google Vision OCR
+    t0 = time.time()
+    crops_bytes = []
     for b in boxes:
-        text = cleanup_text(b.get('text', ''))
-        if not text or len(text) < 1:
+        x1 = max(0, b['x'] - CROP_PAD)
+        y1 = max(0, b['y'] - CROP_PAD)
+        x2 = min(crop_w, b['x'] + b['w'] + CROP_PAD)
+        y2 = min(crop_h, b['y'] + b['h'] + CROP_PAD)
+        crop_region = cropped[y1:y2, x1:x2]
+        if crop_region.size == 0:
+            crops_bytes.append(b'')
+            continue
+        crops_bytes.append(cv2_to_png_bytes(crop_region))
+
+    log.info(f'Cropped {len(crops_bytes)} regions for Vision OCR')
+    ocr_texts = batch_vision_ocr(crops_bytes)
+    ocr_ms = int((time.time() - t0) * 1000)
+    log.info(f'Vision OCR: {ocr_ms}ms')
+
+    # 8. Build bubbles with Vision text
+    bubbles = []
+    for i, b in enumerate(boxes):
+        raw_text = ocr_texts[i] if i < len(ocr_texts) else ''
+        text = cleanup_text(raw_text)
+        if not text or len(text) < 2:
             continue
         bubbles.append({
             'text': text,
@@ -646,8 +646,20 @@ def process():
             'height': round(b['h'] / dpr, 1),
         })
 
-    # 8. Sort reading order
+    # 9. Sort reading order
     bubbles = sort_reading_order(bubbles)
+
+    # Save debug image with boxes and Vision text
+    debug_img = cropped.copy()
+    for i, b in enumerate(boxes):
+        color = [(0, 0, 255), (255, 0, 0), (0, 255, 0), (0, 255, 255), (255, 0, 255)][i % 5]
+        cv2.rectangle(debug_img, (b['x'], b['y']), (b['x'] + b['w'], b['y'] + b['h']), color, 3)
+        ocr_label = (ocr_texts[i] if i < len(ocr_texts) else '')[:30].replace('\n', ' ')
+        cv2.putText(debug_img, f'{i+1}: {ocr_label}', (b['x'], b['y'] - 8),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+    debug_path = os.path.join(os.path.dirname(__file__), 'debug_last.jpg')
+    cv2.imwrite(debug_path, debug_img, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    log.info(f'Debug image saved: {debug_path}')
 
     total_ms = int((time.time() - t_start) * 1000)
     log.info(f'Result: {len(bubbles)} bubbles in {total_ms}ms')
@@ -663,6 +675,7 @@ def process():
             'decode_ms': decode_ms,
             'detect_ms': det_ms,
             'merge_ms': merge_ms,
+            'ocr_ms': ocr_ms,
             'boxes_detected': len(boxes),
             'bubbles_returned': len(bubbles),
             'used_inversion': used_inversion,
