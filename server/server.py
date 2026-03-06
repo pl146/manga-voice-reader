@@ -479,16 +479,20 @@ def merge_vertical_stack(boxes):
 def filter_boxes(boxes):
     """Remove noise boxes by size, aspect ratio, and score."""
     filtered = []
-    for b in boxes:
+    for i, b in enumerate(boxes):
         area = b['w'] * b['h']
         if area < MIN_BOX_AREA:
+            log.info(f'  filter: box {i} dropped (area {area} < {MIN_BOX_AREA})')
             continue
         if b['w'] < MIN_BOX_SIDE or b['h'] < MIN_BOX_SIDE:
+            log.info(f'  filter: box {i} dropped (side {b["w"]}x{b["h"]} < {MIN_BOX_SIDE})')
             continue
         aspect = max(b['w'], b['h']) / max(1, min(b['w'], b['h']))
         if aspect > MAX_ASPECT_RATIO:
+            log.info(f'  filter: box {i} dropped (aspect {aspect:.1f} > {MAX_ASPECT_RATIO})')
             continue
         if b.get('score', 1) < MIN_DET_SCORE:
+            log.info(f'  filter: box {i} dropped (score {b.get("score",0):.2f} < {MIN_DET_SCORE})')
             continue
         filtered.append(b)
     return filtered
@@ -980,13 +984,24 @@ def process():
 
     # 8. Build bubbles: cleanup -> manga corrections -> speech normalization
     bubbles = []
+    ocr_with_text = 0
+    filtered_out = 0
     for i, b in enumerate(boxes):
         raw_text = ocr_texts[i] if i < len(ocr_texts) else ''
+        if raw_text.strip():
+            ocr_with_text += 1
+
         text = cleanup_text(raw_text)
         text = apply_manga_corrections(text)
         text = format_text_for_speech(text)
-        if not text or len(text) < 2:
+
+        # Only discard completely empty text
+        if not text.strip():
+            if raw_text.strip():
+                log.info(f'  bubble {i}: OCR had text but cleaned to empty. raw="{raw_text[:50]}"')
+                filtered_out += 1
             continue
+
         bubbles.append({
             'text': text,
             'conf': round(b.get('score', 1.0), 3),
@@ -995,6 +1010,8 @@ def process():
             'width': round(b['w'] / dpr, 1),
             'height': round(b['h'] / dpr, 1),
         })
+
+    log.info(f'Bubble build: {len(boxes)} boxes -> {ocr_with_text} had OCR text -> {filtered_out} filtered out -> {len(bubbles)} bubbles')
 
     # 9. Sort reading order
     bubbles = sort_reading_order(bubbles)
