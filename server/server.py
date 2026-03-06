@@ -603,51 +603,131 @@ def cleanup_text(text):
 
     return text
 
-# ─── Speech normalization ──────────────────────────────────────────────────
+# ─── Speech formatting ─────────────────────────────────────────────────────
 
-def prepare_text_for_speech(text):
-    """Normalize OCR text for natural-sounding TTS output.
-    Runs after cleanup_text(). Does not modify coordinates."""
+# Words that should stay uppercase (proper nouns, acronyms, etc.)
+_KEEP_UPPER = {
+    'I', 'OK', 'TV', 'US', 'UK', 'DNA', 'FBI', 'CIA', 'USA', 'CEO',
+    'AI', 'ID', 'HP', 'MP', 'XP', 'KO', 'OP', 'NPC', 'RPG',
+}
+
+# Words that should stay lowercase even at sentence start in dialogue
+_LOWERCASE_WORDS = {
+    'a', 'an', 'the', 'and', 'but', 'or', 'nor', 'for', 'yet', 'so',
+    'in', 'on', 'at', 'to', 'of', 'by', 'up', 'as', 'if', 'is', 'it',
+}
+
+
+def _to_sentence_case(text):
+    """Convert ALL CAPS text to natural sentence case.
+    Preserves acronyms, proper 'I', and numbers."""
+    if not text:
+        return text
+
+    # Only convert if the text is mostly uppercase
+    alpha_chars = [c for c in text if c.isalpha()]
+    if not alpha_chars:
+        return text
+    upper_ratio = sum(1 for c in alpha_chars if c.isupper()) / len(alpha_chars)
+    if upper_ratio < 0.6:
+        return text  # Already mixed case, don't touch
+
+    words = text.split()
+    result = []
+    sentence_start = True
+
+    for word in words:
+        # Strip trailing punctuation for processing
+        trail = ''
+        core = word
+        while core and core[-1] in '.,!?;:…':
+            trail = core[-1] + trail
+            core = core[:-1]
+
+        # Preserve numbers and number-letter combos (1ST, 2ND, 300)
+        if core and (core.isdigit() or re.match(r'^\d+\w*$', core)):
+            result.append(word)
+            if trail and trail[-1] in '.!?':
+                sentence_start = True
+            else:
+                sentence_start = False
+            continue
+
+        # Preserve known acronyms/abbreviations
+        if core.upper() in _KEEP_UPPER:
+            result.append(core.upper() + trail)
+            sentence_start = trail and trail[-1] in '.!?'
+            continue
+
+        # Convert to lowercase
+        lower = core.lower()
+
+        # Capitalize first word of sentence
+        if sentence_start and lower:
+            lower = lower[0].upper() + lower[1:]
+
+        # Always capitalize standalone "I"
+        if lower == 'i':
+            lower = 'I'
+        # Fix "i'm", "i'll", "i've", "i'd"
+        if lower.startswith("i'") or lower.startswith("i'"):
+            lower = 'I' + lower[1:]
+
+        result.append(lower + trail)
+
+        if trail and trail[-1] in '.!?':
+            sentence_start = True
+        else:
+            sentence_start = False
+
+    return ' '.join(result)
+
+
+def format_text_for_speech(text):
+    """Convert OCR output into natural spoken dialogue.
+    Runs after cleanup_text() and apply_manga_corrections().
+    Does not modify bubble coordinates."""
     if not text:
         return ''
 
-    # 1. Replace internal line breaks with spaces (OCR splits across lines)
+    # 1. Join broken lines into continuous sentences
     text = re.sub(r'\n+', ' ', text)
 
     # 2. Join spaced single letters: "H E L L O" -> "HELLO"
-    #    Match 3+ single letters separated by spaces to avoid false positives
+    #    Only merge sequences of 3+ single letters to avoid merging real words like "I I" or "I A"
     def merge_spaced(m):
         return m.group(0).replace(' ', '')
     text = re.sub(r'(?<!\w)([A-Za-z]) ([A-Za-z])(?: ([A-Za-z]))+(?!\w)', merge_spaced, text)
-    # Catch remaining pairs at word boundaries
-    text = re.sub(r'(?<!\w)([A-Za-z]) ([A-Za-z])(?!\w)', r'\1\2', text)
 
-    # 3. Remove duplicated adjacent words: "I I LOST" -> "I LOST"
-    text = re.sub(r'\b(\w+)(\s+\1)+\b', r'\1', text, flags=re.IGNORECASE)
-
-    # 4. Fix slash-as-L errors (skip numeric fractions like 1/2)
+    # 3. Fix slash-as-L errors (skip numeric fractions like 1/2)
     text = re.sub(r'([a-zA-Z])/([a-zA-Z])', r'\1l\2', text)
     text = re.sub(r'([a-zA-Z])/$', r'\1l', text)
     text = re.sub(r'([a-zA-Z])led\b', r'\1lled', text)
 
-    # 5. Remove noise tokens (pure symbols or repeated punctuation)
+    # 4. Remove noise tokens (pure symbols or repeated punctuation)
     text = re.sub(r'(?<!\w)[=|_~#*]{2,}(?!\w)', '', text)
-    # Remove tokens that are only punctuation/symbols (not numbers)
-    text = re.sub(r'(?<=\s)[^\w\s]{3,}(?=\s|$)', '', text)
+    text = re.sub(r'(?:^|\s)[^\w\s]{3,}(?:\s|$)', ' ', text)
 
-    # 6. Normalize repeated punctuation: "!!!" -> "!", "???" -> "?", "..." stays
+    # 5. Normalize repeated punctuation: "!!!" -> "!", "???" -> "?", "..." stays
     text = re.sub(r'!{2,}', '!', text)
     text = re.sub(r'\?{2,}', '?', text)
     text = re.sub(r'\.{4,}', '...', text)
+    text = re.sub(r'[?!]{3,}', '!', text)
 
-    # 7. Ensure sentence-ending punctuation for natural pauses
+    # 6. Convert ALL CAPS to natural sentence case
+    text = _to_sentence_case(text)
+
+    # 7. Remove duplicated adjacent words (after case conversion so "I I" works)
+    text = re.sub(r'\b(\w+)(\s+\1)+\b', r'\1', text, flags=re.IGNORECASE)
+
+    # 8. Numbers are preserved (regex above skips digits)
+
+    # 9. Ensure sentence-ending punctuation for natural TTS pause
     text = text.strip()
-    if text and text[-1] not in '.!?':
+    if text and text[-1] not in '.!?…':
         text += '.'
 
-    # 8. Numbers are preserved (no modification needed, regex above skips them)
-
-    # 9. Final whitespace cleanup
+    # Final whitespace cleanup
     text = re.sub(r'\s+', ' ', text).strip()
 
     return text
@@ -833,7 +913,7 @@ def process():
         raw_text = ocr_texts[i] if i < len(ocr_texts) else ''
         text = cleanup_text(raw_text)
         text = apply_manga_corrections(text)
-        text = prepare_text_for_speech(text)
+        text = format_text_for_speech(text)
         if not text or len(text) < 2:
             continue
         bubbles.append({

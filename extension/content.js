@@ -268,7 +268,7 @@ async function readPage() {
       setStatus(`Reading ${i + 1} of ${bubbles.length}...`);
       await speak(bubbles[i].text);
       if (speaking && i < bubbles.length - 1) {
-        await new Promise(r => setTimeout(r, 200));
+        await new Promise(r => setTimeout(r, 500));
       }
     }
 
