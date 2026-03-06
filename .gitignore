@@ -3,7 +3,14 @@ server/credentials.json
 server/debug_last.jpg
 server/models/production_detector/
 server/models/baseline_detector/
+server/models/baseline_recognizer/
+server/models/trained_fonts/
 server/models/runs/
+server/models/backup/
+server/datasets/manga_pages/
+server/datasets/cropped_text/
+server/datasets/validation/
+__pycache__/
 node_modules/
 .vercel/
 .DS_Store

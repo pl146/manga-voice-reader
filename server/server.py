@@ -6,6 +6,7 @@ Endpoint: POST /process
 
 import base64
 import io
+import json
 import logging
 import os
 import re
@@ -34,6 +35,10 @@ LOW_BOX_THRESHOLD = 5  # if fewer boxes, run inverted pass
 CROP_PAD = 8  # padding around each box crop for Vision OCR
 VISION_BATCH_SIZE = 16  # Google Vision max per batch call
 ROW_Y_THRESHOLD_RATIO = 0.6  # fraction of avg height for row grouping
+
+# Hybrid recognition: optional local recognizer trained on manga fonts
+USE_LOCAL_RECOGNIZER = os.environ.get('USE_LOCAL_RECOGNIZER', '').lower() in ('true', '1', 'yes')
+COLLECT_TRAINING_DATA = os.environ.get('COLLECT_TRAINING_DATA', '').lower() in ('true', '1', 'yes')
 
 logging.basicConfig(level=logging.INFO, format='[MVR] %(message)s')
 log = logging.getLogger('mvr')
@@ -92,6 +97,125 @@ def load_vision():
         raise RuntimeError('Google Vision credentials not configured')
     vision_client = vision.ImageAnnotatorClient()
     log.info('Google Vision client loaded.')
+
+# ─── Local recognizer (optional, for hybrid mode) ─────────────────────────
+
+local_recognizer = None
+
+def load_local_recognizer():
+    global local_recognizer
+    if not USE_LOCAL_RECOGNIZER:
+        return
+    from paddleocr import PaddleOCR
+
+    model_dir = os.path.join(os.path.dirname(__file__), 'models', 'trained_fonts')
+    has_model = os.path.isdir(model_dir) and any(
+        f.endswith(('.pdparams', '.pdmodel', '.pdiparams'))
+        for f in os.listdir(model_dir)
+    )
+    if not has_model:
+        log.warning(f'No trained font model found in {model_dir}. Local recognizer disabled.')
+        return
+
+    local_recognizer = PaddleOCR(
+        use_textline_orientation=False,
+        use_doc_orientation_classify=False,
+        use_doc_unwarping=False,
+        text_recognition_model_dir=model_dir,
+    )
+    log.info(f'Local font recognizer loaded from {model_dir}')
+
+
+def local_recognize_crops(crops_imgs):
+    """Run local PaddleOCR recognizer on crop images. Returns list of texts."""
+    if not local_recognizer:
+        return [''] * len(crops_imgs)
+    texts = []
+    for img in crops_imgs:
+        if img is None or img.size == 0:
+            texts.append('')
+            continue
+        results = local_recognizer.predict(img)
+        if results:
+            page_text = []
+            for r in results:
+                res = r.json.get('res', {})
+                for t in res.get('rec_texts', []):
+                    if t.strip():
+                        page_text.append(t.strip())
+            texts.append(' '.join(page_text))
+        else:
+            texts.append('')
+    return texts
+
+# ─── Manga corrections dictionary ─────────────────────────────────────────
+
+manga_corrections = None
+
+def load_manga_corrections():
+    global manga_corrections
+    corrections_path = os.path.join(os.path.dirname(__file__), 'manga_corrections.json')
+    if os.path.isfile(corrections_path):
+        with open(corrections_path) as f:
+            manga_corrections = json.load(f)
+        word_count = len(manga_corrections.get('word_corrections', {}))
+        pattern_count = len(manga_corrections.get('pattern_corrections', []))
+        log.info(f'Manga corrections loaded: {word_count} words, {pattern_count} patterns')
+    else:
+        log.info('No manga_corrections.json found, skipping corrections.')
+        manga_corrections = {'word_corrections': {}, 'pattern_corrections': [], 'common_sfx': {}}
+
+
+def apply_manga_corrections(text):
+    """Apply manga-specific OCR corrections from the dictionary."""
+    if not manga_corrections or not text:
+        return text
+
+    # Word-level corrections (case-insensitive)
+    word_map = manga_corrections.get('word_corrections', {})
+    if word_map:
+        words = text.split()
+        corrected = []
+        for word in words:
+            # Strip punctuation for lookup, preserve it
+            stripped = word.strip('.,!?;:\'"()[]{}')
+            prefix = word[:len(word) - len(word.lstrip('.,!?;:\'"()[]{}'))]
+            suffix = word[len(stripped) + len(prefix):]
+            lookup = stripped.lower()
+            if lookup in word_map:
+                replacement = word_map[lookup]
+                # Match original case style
+                if stripped.isupper():
+                    replacement = replacement.upper()
+                elif stripped[0].isupper() if stripped else False:
+                    replacement = replacement.capitalize()
+                corrected.append(prefix + replacement + suffix)
+            else:
+                corrected.append(word)
+        text = ' '.join(corrected)
+
+    # Pattern corrections (regex)
+    for rule in manga_corrections.get('pattern_corrections', []):
+        pattern = rule.get('pattern', '')
+        replacement = rule.get('replacement', '')
+        if pattern:
+            text = re.sub(pattern, replacement, text)
+
+    # Sound effects normalization for TTS
+    sfx_map = manga_corrections.get('common_sfx', {})
+    if sfx_map:
+        words = text.split()
+        corrected = []
+        for word in words:
+            stripped = word.strip('.,!?;:')
+            suffix = word[len(stripped):]
+            if stripped.upper() in sfx_map:
+                corrected.append(sfx_map[stripped.upper()] + suffix)
+            else:
+                corrected.append(word)
+        text = ' '.join(corrected)
+
+    return text
 
 # ─── Image helpers ──────────────────────────────────────────────────────────
 
@@ -660,9 +784,10 @@ def process():
             }
         })
 
-    # 7. Crop each detected box and send to Google Vision OCR
+    # 7. Crop each detected box
     t0 = time.time()
     crops_bytes = []
+    crops_imgs = []
     for b in boxes:
         x1 = max(0, b['x'] - CROP_PAD)
         y1 = max(0, b['y'] - CROP_PAD)
@@ -671,19 +796,43 @@ def process():
         crop_region = cropped[y1:y2, x1:x2]
         if crop_region.size == 0:
             crops_bytes.append(b'')
+            crops_imgs.append(None)
             continue
         crops_bytes.append(cv2_to_png_bytes(crop_region))
+        crops_imgs.append(crop_region)
 
+    # 7a. Google Vision OCR (primary)
     log.info(f'Cropped {len(crops_bytes)} regions for Vision OCR')
     ocr_texts = batch_vision_ocr(crops_bytes)
     ocr_ms = int((time.time() - t0) * 1000)
     log.info(f'Vision OCR: {ocr_ms}ms')
 
-    # 8. Build bubbles with Vision text -> cleanup -> speech normalization
+    # 7b. Local recognizer fallback (if enabled and Vision returned empty)
+    if local_recognizer:
+        empty_indices = [i for i, t in enumerate(ocr_texts) if not t.strip()]
+        if empty_indices:
+            empty_imgs = [crops_imgs[i] for i in empty_indices]
+            local_texts = local_recognize_crops(empty_imgs)
+            for idx, local_text in zip(empty_indices, local_texts):
+                if local_text.strip():
+                    ocr_texts[idx] = local_text
+                    log.info(f'  Box {idx}: Vision empty, local fallback: "{local_text[:50]}"')
+
+    # 7c. Collect training data if enabled
+    if COLLECT_TRAINING_DATA:
+        from training.collect_dataset import save_crop_pair
+        dataset_dir = os.path.join(os.path.dirname(__file__), 'datasets', 'cropped_text')
+        for i, crop_img in enumerate(crops_imgs):
+            text = ocr_texts[i] if i < len(ocr_texts) else ''
+            if crop_img is not None and text.strip():
+                save_crop_pair(dataset_dir, crop_img, text.strip(), 'vision')
+
+    # 8. Build bubbles: cleanup -> manga corrections -> speech normalization
     bubbles = []
     for i, b in enumerate(boxes):
         raw_text = ocr_texts[i] if i < len(ocr_texts) else ''
         text = cleanup_text(raw_text)
+        text = apply_manga_corrections(text)
         text = prepare_text_for_speech(text)
         if not text or len(text) < 2:
             continue
@@ -751,5 +900,9 @@ if __name__ == '__main__':
     log.info('Loading detector model...')
     load_detector()
     load_vision()
+    load_local_recognizer()
+    load_manga_corrections()
+    if COLLECT_TRAINING_DATA:
+        log.info('Training data collection ENABLED')
     log.info(f'Server ready on http://127.0.0.1:{PORT}')
     app.run(host='127.0.0.1', port=PORT, debug=False, threaded=True)
