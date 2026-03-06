@@ -4,6 +4,7 @@
 let speaking = false;
 let currentUtterance = null;
 let panelCreated = false;
+let currentAudio = null; // For AI TTS audio playback
 
 // ─── Activation gate ─────────────────────────────────────────────────────────
 
@@ -262,11 +263,23 @@ async function readPage() {
     const allText = bubbles.map((b, i) => `[${i + 1}] ${b.text}`).join('\n');
     showText(allText);
 
+    // Check if AI TTS mode is enabled
+    const aiTtsEnabled = await new Promise(r =>
+      chrome.storage.local.get('aiTtsEnabled', d => r(!!d.aiTtsEnabled))
+    );
+    if (aiTtsEnabled) {
+      console.log('[MVR] Using AI voice (Piper TTS)');
+    }
+
     for (let i = 0; i < bubbles.length; i++) {
       if (!speaking) break;
       setActiveBubble(i);
-      setStatus(`Reading ${i + 1} of ${bubbles.length}...`);
-      await speak(bubbles[i].text);
+      setStatus(`Reading ${i + 1} of ${bubbles.length}...` + (aiTtsEnabled ? ' (AI)' : ''));
+      if (aiTtsEnabled) {
+        await speakAI(bubbles[i].text);
+      } else {
+        await speak(bubbles[i].text);
+      }
       if (speaking && i < bubbles.length - 1) {
         await new Promise(r => setTimeout(r, 500));
       }
@@ -306,9 +319,74 @@ async function speak(text) {
   });
 }
 
+// ─── AI TTS (local Piper via server — experimental) ──────────────────────────
+
+async function speakAI(text) {
+  if (!speaking) return;
+
+  try {
+    const res = await fetch('http://127.0.0.1:5055/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      console.warn('[MVR] AI TTS failed, falling back to browser voice:', err.error);
+      return speak(text); // Fallback to browser voice
+    }
+
+    const data = await res.json();
+    if (!data.audioBase64) {
+      console.warn('[MVR] AI TTS returned no audio, falling back');
+      return speak(text);
+    }
+
+    // Play the WAV audio
+    return new Promise((resolve) => {
+      if (!speaking) { resolve(); return; }
+
+      const audioBytes = Uint8Array.from(atob(data.audioBase64), c => c.charCodeAt(0));
+      const blob = new Blob([audioBytes], { type: 'audio/wav' });
+      const url = URL.createObjectURL(blob);
+
+      const audio = new Audio(url);
+      currentAudio = audio;
+      audio.onended = () => {
+        currentAudio = null;
+        URL.revokeObjectURL(url);
+        resolve();
+      };
+      audio.onerror = () => {
+        currentAudio = null;
+        URL.revokeObjectURL(url);
+        console.warn('[MVR] AI audio playback error, falling back');
+        speak(text).then(resolve);
+      };
+      audio.play().catch(() => {
+        currentAudio = null;
+        URL.revokeObjectURL(url);
+        speak(text).then(resolve);
+      });
+    });
+
+  } catch (err) {
+    console.warn('[MVR] AI TTS network error, falling back:', err.message);
+    return speak(text); // Fallback to browser voice
+  }
+}
+
+// ─── Stop ────────────────────────────────────────────────────────────────────
+
 function stopSpeaking() {
   speaking = false;
   window.speechSynthesis.cancel();
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio.currentTime = 0;
+    currentAudio = null;
+  }
   currentUtterance = null;
   removeHighlights();
   setStatus('Stopped.');

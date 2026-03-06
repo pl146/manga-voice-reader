@@ -45,3 +45,42 @@ async function checkServer() {
 }
 
 checkServer();
+
+// ─── AI TTS toggle ──────────────────────────────────────────────────────────
+
+const aiToggle = document.getElementById('ai-tts-toggle');
+const aiStatus = document.getElementById('ai-tts-status');
+
+// Load saved state
+chrome.storage.local.get('aiTtsEnabled', (data) => {
+  if (aiToggle) aiToggle.checked = !!data.aiTtsEnabled;
+});
+
+// Save on toggle
+if (aiToggle) {
+  aiToggle.addEventListener('change', () => {
+    chrome.storage.local.set({ aiTtsEnabled: aiToggle.checked });
+  });
+}
+
+// Check if Piper is available on server
+async function checkAiTts() {
+  if (!aiStatus) return;
+  try {
+    const res = await fetch('http://127.0.0.1:5055/tts/status', { signal: AbortSignal.timeout(2000) });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.available) {
+        aiStatus.textContent = 'AI voice: ' + (data.model || 'ready');
+        aiStatus.style.color = '#69ff82';
+      } else {
+        aiStatus.textContent = 'AI voice: not configured';
+        aiStatus.style.color = '#777';
+      }
+    }
+  } catch (_) {
+    aiStatus.textContent = '';
+  }
+}
+
+checkAiTts();

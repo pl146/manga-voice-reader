@@ -10,6 +10,8 @@ import json
 import logging
 import os
 import re
+import subprocess
+import tempfile
 import time
 from math import ceil
 
@@ -1045,6 +1047,84 @@ def debug():
         return 'No debug image yet. Click "Read Page" first.', 404
     return send_file(debug_path, mimetype='image/jpeg')
 
+# ─── Local AI TTS (Piper) ──────────────────────────────────────────────────
+
+PIPER_BIN = os.environ.get('PIPER_BIN', 'piper')
+PIPER_MODEL = os.environ.get('PIPER_MODEL', '')
+piper_available = False
+
+def check_piper():
+    """Check if Piper TTS is installed and a model is configured."""
+    global piper_available
+    if not PIPER_MODEL or not os.path.isfile(PIPER_MODEL):
+        log.info('Piper TTS: no model configured (set PIPER_MODEL env var)')
+        return
+    try:
+        subprocess.run([PIPER_BIN, '--version'], capture_output=True, timeout=5)
+        piper_available = True
+        log.info(f'Piper TTS: available (model: {os.path.basename(PIPER_MODEL)})')
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        log.info('Piper TTS: binary not found (install piper or set PIPER_BIN)')
+
+
+@app.route('/tts', methods=['POST'])
+def tts_endpoint():
+    """Generate speech audio from text using local Piper TTS.
+    Returns WAV audio. Only active when Piper is installed."""
+    if not piper_available:
+        return jsonify({'error': 'Piper TTS not available. Install piper and set PIPER_MODEL.'}), 503
+
+    data = request.json
+    text = (data or {}).get('text', '').strip()
+    if not text:
+        return jsonify({'error': 'No text provided'}), 400
+
+    try:
+        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp:
+            tmp_path = tmp.name
+
+        result = subprocess.run(
+            [PIPER_BIN, '--model', PIPER_MODEL, '--output_file', tmp_path],
+            input=text,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        if result.returncode != 0:
+            log.error(f'Piper error: {result.stderr[:200]}')
+            return jsonify({'error': 'Piper TTS failed: ' + result.stderr[:200]}), 500
+
+        with open(tmp_path, 'rb') as f:
+            audio_bytes = f.read()
+
+        os.unlink(tmp_path)
+
+        audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
+        return jsonify({'ok': True, 'audioBase64': audio_b64, 'format': 'wav'})
+
+    except subprocess.TimeoutExpired:
+        return jsonify({'error': 'Piper TTS timed out'}), 504
+    except Exception as e:
+        log.error(f'TTS error: {e}')
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+
+@app.route('/tts/status', methods=['GET'])
+def tts_status():
+    """Check if local AI TTS is available."""
+    return jsonify({
+        'available': piper_available,
+        'engine': 'piper' if piper_available else None,
+        'model': os.path.basename(PIPER_MODEL) if piper_available else None,
+    })
+
 # ─── Startup ────────────────────────────────────────────────────────────────
 
 if __name__ == '__main__':
@@ -1053,6 +1133,7 @@ if __name__ == '__main__':
     load_vision()
     load_local_recognizer()
     load_manga_corrections()
+    check_piper()
     if COLLECT_TRAINING_DATA:
         log.info('Training data collection ENABLED')
     log.info(f'Server ready on http://127.0.0.1:{PORT}')
