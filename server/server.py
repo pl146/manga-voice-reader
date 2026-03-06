@@ -32,7 +32,8 @@ MIN_BOX_SIDE = 12
 MAX_ASPECT_RATIO = 15.0
 MIN_DET_SCORE = 0.3
 LOW_BOX_THRESHOLD = 5  # if fewer boxes, run inverted pass
-CROP_PAD = 8  # padding around each box crop for Vision OCR
+CROP_PAD_X = 25  # horizontal padding around each box crop for Vision OCR
+CROP_PAD_Y = 10  # vertical padding around each box crop for Vision OCR
 VISION_BATCH_SIZE = 16  # Google Vision max per batch call
 ROW_Y_THRESHOLD_RATIO = 0.6  # fraction of avg height for row grouping
 
@@ -864,15 +865,15 @@ def process():
             }
         })
 
-    # 7. Crop each detected box
+    # 7. Crop each detected box with asymmetric padding (wider horizontally)
     t0 = time.time()
     crops_bytes = []
     crops_imgs = []
     for b in boxes:
-        x1 = max(0, b['x'] - CROP_PAD)
-        y1 = max(0, b['y'] - CROP_PAD)
-        x2 = min(crop_w, b['x'] + b['w'] + CROP_PAD)
-        y2 = min(crop_h, b['y'] + b['h'] + CROP_PAD)
+        x1 = max(0, b['x'] - CROP_PAD_X)
+        y1 = max(0, b['y'] - CROP_PAD_Y)
+        x2 = min(crop_w, b['x'] + b['w'] + CROP_PAD_X)
+        y2 = min(crop_h, b['y'] + b['h'] + CROP_PAD_Y)
         crop_region = cropped[y1:y2, x1:x2]
         if crop_region.size == 0:
             crops_bytes.append(b'')
