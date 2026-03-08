@@ -2,6 +2,9 @@
 
 A Chrome extension + local Python server that detects speech bubbles in manga pages, reads them aloud with AI voice, and highlights each bubble as it's spoken. Fully local — no cloud APIs, no paid services, no data leaves your machine.
 
+![Bubble Detection Demo](docs/detection-demo.png)
+*AI bubble detection in action — green boxes show detected speech bubbles with OCR text extracted from each one. The system identifies dialogue, reads it in order, and filters out sound effects automatically.*
+
 ## How It Works
 
 1. Open any manga page in Chrome
