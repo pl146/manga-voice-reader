@@ -2,8 +2,31 @@
 
 A Chrome extension + local Python server that detects speech bubbles in manga pages, reads them aloud with AI voice, and highlights each bubble as it's spoken. Fully local — no cloud APIs, no paid services, no data leaves your machine.
 
-![Bubble Detection Demo](docs/detection-demo.png)
-*AI bubble detection in action — green boxes show detected speech bubbles with OCR text extracted from each one. The system identifies dialogue, reads it in order, and filters out sound effects automatically.*
+### Original Manga Page
+![Original Page](docs/original-page.png)
+
+### AI Bubble Detection (RT-DETR-v2 + PaddleOCR)
+![Bubble Detection](docs/detection-demo.png)
+*Green boxes = detected speech bubbles. Dark overlays = extracted OCR text. The system finds every bubble, reads the text, filters out sound effects, and sorts them in reading order.*
+
+### Individual Bubble Crops (Fed to OCR)
+| | | |
+|:---:|:---:|:---:|
+| ![Crop 1](docs/crop-bubble-1.png) | ![Crop 2](docs/crop-bubble-2.png) | ![Crop 3](docs/crop-bubble-3.png) |
+| "We need to get rid of these arrows before the kids are carried off!!" | "I doubt Chopper will be back anytime soon, and Brook's gone off somewhere. He must be up to something..." | "Master Dorri! Master Brog'!! I can't stand seeing you like this!" |
+
+### OCR Output (27 bubbles detected on this page)
+```
+[1]  Please hurry!! Elder Jarl's in trouble!!
+[2]  Begone, you vile creatures!!
+[3]  Hanging there, kids!!
+[6]  No whining!! We're warriors of Elbaf!!
+[14] I doubt Chopper will be back anytime soon, and Brook's gone off
+     somewhere. He must be up to something...
+[23] Master Dorri! Master Brog'!! I can't stand seeing you like this!
+[24] We need to get rid of these arrows before the kids are carried off!!
+[27] I won't retreat!! There's still something I've got to tell Elbaf.
+```
 
 ## How It Works
 
