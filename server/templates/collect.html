@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>MVR - Dataset Collection</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #1a1a2e; color: #eee; font-family: 'Segoe UI', sans-serif; padding: 20px; }
+h1 { color: #e94560; margin-bottom: 8px; }
+.sub { color: #888; margin-bottom: 25px; font-size: 14px; }
+.section { background: #16213e; border-radius: 12px; padding: 20px; margin-bottom: 20px; }
+.section h2 { color: #e94560; font-size: 17px; margin-bottom: 12px; }
+.stats { display: flex; gap: 12px; flex-wrap: wrap; margin: 12px 0; }
+.stat { background: #0f3460; padding: 10px 18px; border-radius: 8px; text-align: center; min-width: 100px; }
+.stat .num { font-size: 26px; font-weight: bold; color: #e94560; }
+.stat .label { font-size: 11px; color: #aaa; margin-top: 3px; }
+.btn { padding: 14px 35px; border: none; border-radius: 8px; font-size: 17px; cursor: pointer; font-weight: bold; }
+.btn-orange { background: #f0a500; color: #1a1a2e; }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.phase { display: inline-block; padding: 8px 20px; border-radius: 20px; font-weight: bold; font-size: 15px; }
+.phase-idle { background: #333; color: #888; }
+.phase-running { background: #0f3460; color: #88c8f7; animation: pulse 1.5s infinite; }
+.phase-done { background: #1a4030; color: #4ecca3; }
+.phase-error { background: #4a1020; color: #e94560; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
+.log { background: #0a0a1a; border-radius: 8px; padding: 12px; max-height: 400px; overflow-y: auto; font-family: monospace; font-size: 12px; line-height: 1.5; }
+.log div { padding: 1px 0; }
+.log .phase-line { color: #f0a500; font-weight: bold; }
+.log .good { color: #4ecca3; }
+.log .err { color: #e94560; }
+.log .info { color: #88c8f7; }
+a { color: #88c8f7; }
+</style>
+</head>
+<body>
+
+<h1>Dataset Collection</h1>
+<p class="sub">Find and download manga pages with English text for training</p>
+
+<div class="section" style="text-align:center;">
+  <div class="phase phase-idle" id="phase">Ready</div>
+  <div style="margin:15px 0;">
+    <button class="btn btn-orange" onclick="startCollect()" id="btn-start">Start Collection</button>
+  </div>
+  <p id="progress" style="color:#888;"></p>
+  <div class="stats" style="justify-content:center;">
+    <div class="stat"><div class="num" id="n-pages">0</div><div class="label">Pages Found</div></div>
+    <div class="stat"><div class="num" id="n-reject">0</div><div class="label">Rejected</div></div>
+    <div class="stat"><div class="num" id="n-d">0</div><div class="label">Dialogue Crops</div></div>
+    <div class="stat"><div class="num" id="n-j">0</div><div class="label">Junk Crops</div></div>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Sources</h2>
+  <ul style="color:#aaa; font-size:13px; line-height:2; padding-left:20px;">
+    <li>HuggingFace: jianzongwu/MangaZero (manga pages dataset)</li>
+    <li>Local: dataset/raw/manga_bw/ (3610 One Piece pages)</li>
+    <li>Bubble detector crops all text regions from every page</li>
+  </ul>
+</div>
+
+<div class="section">
+  <h2>Log</h2>
+  <div class="log" id="log"><div class="info">Click "Start Collection" to begin.</div></div>
+</div>
+
+<p style="margin-top:20px; color:#666; font-size:13px;">After collection, go to <a href="/train">/train</a> to train the classifier on the bigger dataset.</p>
+
+<script>
+let poll = null;
+
+async function startCollect() {
+  document.getElementById('btn-start').disabled = true;
+  await fetch('/collect/start', {method:'POST'});
+  if (!poll) poll = setInterval(doPoll, 1000);
+  doPoll();
+}
+
+async function doPoll() {
+  try {
+    const d = await (await fetch('/collect/progress')).json();
+
+    const ph = document.getElementById('phase');
+    ph.textContent = d.phase || d.status || 'idle';
+    ph.className = 'phase phase-' + (d.status === 'running' ? 'running' : d.status === 'done' ? 'done' : d.status === 'error' ? 'error' : 'idle');
+
+    document.getElementById('progress').textContent = d.progress || '';
+    document.getElementById('n-pages').textContent = d.accepted || 0;
+    document.getElementById('n-reject').textContent = d.rejected || 0;
+    document.getElementById('n-d').textContent = d.crops_dialogue || 0;
+    document.getElementById('n-j').textContent = d.crops_junk || 0;
+
+    if (d.log && d.log.length > 0) {
+      const el = document.getElementById('log');
+      el.innerHTML = d.log.map(l => {
+        if (l.includes('Phase') || l.includes('===')) return '<div class="phase-line">'+l+'</div>';
+        if (l.includes('ERROR')) return '<div class="err">'+l+'</div>';
+        if (l.includes('Complete') || l.includes('DONE')) return '<div class="good">'+l+'</div>';
+        return '<div class="info">'+l+'</div>';
+      }).join('');
+      el.scrollTop = el.scrollHeight;
+    }
+
+    if (d.status !== 'running') {
+      clearInterval(poll); poll = null;
+      document.getElementById('btn-start').disabled = false;
+    }
+  } catch(e) {}
+}
+
+// Check if already running
+fetch('/collect/progress').then(r=>r.json()).then(d => {
+  if (d.status === 'running') {
+    document.getElementById('btn-start').disabled = true;
+    poll = setInterval(doPoll, 1000);
+    doPoll();
+  }
+});
+</script>
+</body>
+</html>

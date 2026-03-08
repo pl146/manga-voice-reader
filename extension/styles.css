@@ -2,86 +2,234 @@
   position: fixed;
   bottom: 12px;
   right: 12px;
-  width: 220px;
-  background: #1a1a2e;
-  border: 2px solid #e94560;
-  border-radius: 10px;
+  width: 200px;
+  max-width: calc(100vw - 24px);
+  background: rgba(12, 12, 22, 0.93);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(233, 69, 96, 0.2);
+  border-radius: 12px;
   z-index: 2147483647;
-  font-family: -apple-system, sans-serif;
-  font-size: 12px;
-  color: #eee;
-  box-shadow: 0 6px 24px rgba(0,0,0,0.5);
-  cursor: move;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 11px;
+  color: #e0e0e8;
+  box-shadow: 0 6px 30px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.04);
+  cursor: default;
   user-select: none;
+  overflow: hidden;
 }
+
+/* Header */
 #mvr-head {
-  background: #e94560;
+  background: linear-gradient(135deg, #e94560 0%, #c22d4e 100%);
   padding: 6px 10px;
-  border-radius: 8px 8px 0 0;
-  font-weight: 700;
-  font-size: 12px;
   display: flex;
   justify-content: space-between;
   align-items: center;
   cursor: move;
 }
-#mvr-x {
-  background: none; border: none; color: #fff; cursor: pointer; font-size: 14px;
+#mvr-head-title {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 700;
+  font-size: 11px;
+  color: #fff;
+  letter-spacing: 0.2px;
 }
+#mvr-head-title svg { flex-shrink: 0; opacity: 0.9; }
+#mvr-x {
+  background: rgba(255,255,255,0.15);
+  border: none;
+  color: #fff;
+  cursor: pointer;
+  font-size: 9px;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+  line-height: 1;
+}
+#mvr-x:hover { background: rgba(255,255,255,0.3); }
+
+/* Body */
 #mvr-body {
-  padding: 8px;
+  padding: 7px 9px 9px;
   display: flex;
   flex-direction: column;
   gap: 5px;
 }
+
+/* Status */
 #mvr-status {
-  font-size: 11px;
-  color: #aaa;
+  font-size: 10px;
+  color: rgba(255,255,255,0.35);
   text-align: center;
+  min-height: 12px;
 }
-#mvr-go, #mvr-stop {
+
+/* Progress bar */
+#mvr-progress-wrap {
+  height: 2px;
+  background: rgba(255,255,255,0.06);
+  border-radius: 2px;
+  overflow: hidden;
+}
+#mvr-progress-bar {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #e94560, #ff6b81);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+/* Button rows */
+#mvr-row-idle,
+#mvr-row-reading {
+  display: flex;
+  gap: 5px;
+}
+
+/* Main action button */
+#mvr-go {
+  flex: 1;
   padding: 7px;
   border: none;
-  border-radius: 6px;
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-  width: 100%;
-}
-#mvr-go {
-  background: #e94560;
-  color: #fff;
-}
-#mvr-go:hover { background: #c73652; }
-#mvr-stop {
-  background: #333;
-  color: #fff;
-}
-#mvr-text {
-  background: #16213e;
-  border: 1px solid #0f3460;
-  border-radius: 6px;
-  padding: 6px;
-  min-height: 30px;
-  max-height: 100px;
-  overflow-y: auto;
+  border-radius: 8px;
   font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  background: linear-gradient(135deg, #e94560, #c22d4e);
+  color: #fff;
+  transition: all 0.15s;
+  box-shadow: 0 2px 6px rgba(233, 69, 96, 0.2);
+}
+#mvr-go:hover {
+  filter: brightness(1.1);
+  box-shadow: 0 3px 10px rgba(233, 69, 96, 0.3);
+}
+#mvr-go:active { transform: scale(0.98); }
+
+/* Pause button */
+#mvr-pause {
+  width: 32px;
+  padding: 7px;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px;
+  font-size: 12px;
+  cursor: pointer;
+  background: rgba(255,255,255,0.05);
+  color: #e0e0e8;
+  transition: all 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+#mvr-pause:hover { background: rgba(255,255,255,0.1); }
+#mvr-pause.active { background: rgba(233,69,96,0.15); border-color: rgba(233,69,96,0.3); color: #e94560; }
+
+/* Stop button */
+#mvr-stop {
+  flex: 1;
+  padding: 7px;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  background: rgba(255,255,255,0.05);
+  color: #aaa;
+  transition: all 0.15s;
+}
+#mvr-stop:hover { background: rgba(255,255,255,0.1); color: #e0e0e8; }
+
+/* Text display */
+#mvr-text {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.05);
+  border-radius: 6px;
+  padding: 5px 7px;
+  min-height: 20px;
+  max-height: 60px;
+  overflow-y: auto;
+  font-size: 10px;
   line-height: 1.4;
   white-space: pre-wrap;
+  user-select: text;
+  cursor: text;
+  color: rgba(255,255,255,0.7);
 }
-#mvr label {
-  font-size: 10px;
-  color: #aaa;
+#mvr-text::-webkit-scrollbar { width: 3px; }
+#mvr-text::-webkit-scrollbar-track { background: transparent; }
+#mvr-text::-webkit-scrollbar-thumb { background: rgba(233,69,96,0.25); border-radius: 2px; }
+
+/* Controls toggle */
+#mvr-controls-toggle {
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.3);
+  font-size: 9px;
+  cursor: pointer;
+  padding: 2px 0;
+  text-align: center;
+  transition: color 0.15s;
+}
+#mvr-controls-toggle:hover { color: rgba(255,255,255,0.5); }
+
+/* Controls */
+#mvr-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255,255,255,0.04);
+}
+#mvr-controls.collapsed { display: none; }
+#mvr-controls label {
+  font-size: 9px;
+  color: rgba(255,255,255,0.3);
   display: flex;
   align-items: center;
   gap: 4px;
 }
-#mvr input[type="range"] {
+#mvr-controls select {
+  flex: 1;
+  background: rgba(255,255,255,0.06);
+  color: #ccc;
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-size: 9px;
+  cursor: pointer;
+  outline: none;
+}
+#mvr-controls select:focus { border-color: rgba(233,69,96,0.3); }
+#mvr-controls input[type="range"] {
   flex: 1;
   accent-color: #e94560;
+  height: 2px;
+}
+#mvr-controls input[type="checkbox"] {
+  accent-color: #e94560;
+  cursor: pointer;
+  width: 11px;
+  height: 11px;
 }
 #mvr-sv {
   color: #e94560;
-  font-weight: 700;
-  font-size: 10px;
+  font-weight: 600;
+  font-size: 9px;
+  min-width: 24px;
+  text-align: right;
+}
+#mvr-auto-label { cursor: pointer; }
+#mvr-keys {
+  font-size: 8px;
+  color: rgba(255,255,255,0.15);
+  text-align: center;
+  margin-top: 1px;
 }

@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>MVR - Train AI</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0d1117; color: #eee; font-family: 'Segoe UI', sans-serif; padding: 20px; max-width: 1200px; margin: 0 auto; }
+h1 { color: #e94560; margin-bottom: 5px; }
+.sub { color: #888; margin-bottom: 20px; font-size: 14px; }
+
+.card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 20px; margin-bottom: 20px; }
+.card h2 { color: #e94560; font-size: 18px; margin-bottom: 15px; }
+
+/* Buttons */
+.btn { padding: 12px 30px; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; font-weight: bold; }
+.btn-go { background: #4ecca3; color: #000; }
+.btn-stop { background: #e94560; color: #fff; }
+.btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+/* Phase */
+.phase { display: inline-block; padding: 8px 20px; border-radius: 20px; font-weight: bold; font-size: 15px; }
+.phase-idle { background: #21262d; color: #888; }
+.phase-active { background: #1a4030; color: #4ecca3; animation: pulse 1.5s infinite; }
+.phase-done { background: #1a4030; color: #4ecca3; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
+
+/* Stats row */
+.stats { display: flex; gap: 12px; flex-wrap: wrap; margin: 12px 0; }
+.stat { background: #0d1117; border: 1px solid #30363d; padding: 10px 18px; border-radius: 8px; text-align: center; min-width: 90px; }
+.stat .num { font-size: 28px; font-weight: bold; color: #e94560; }
+.stat .label { font-size: 11px; color: #888; margin-top: 3px; }
+
+/* Accuracy bar */
+.acc-wrap { margin: 15px 0; }
+.acc-label { display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 13px; color: #888; }
+.acc-bar { height: 36px; background: #21262d; border-radius: 18px; overflow: hidden; position: relative; }
+.acc-fill { height: 100%; border-radius: 18px; transition: width 0.6s ease; display: flex; align-items: center; justify-content: flex-end; padding-right: 12px; min-width: 50px; }
+.acc-fill span { font-weight: bold; font-size: 15px; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,0.5); }
+
+/* Live images */
+.live-grid { display: flex; gap: 15px; flex-wrap: wrap; justify-content: center; }
+.live-card { background: #0d1117; border: 2px solid #30363d; border-radius: 10px; padding: 12px; text-align: center; width: 180px; transition: border-color 0.3s, transform 0.3s; animation: pop 0.5s ease; }
+.live-card.correct { border-color: #4ecca3; }
+.live-card.wrong { border-color: #e94560; }
+.live-card img { width: 150px; height: 120px; object-fit: contain; background: #fff; border-radius: 6px; }
+.live-card .true-label { font-size: 11px; color: #888; margin-top: 6px; }
+.live-card .pred { font-size: 16px; font-weight: bold; margin-top: 3px; }
+.live-card .conf { font-size: 12px; color: #aaa; margin-top: 2px; }
+@keyframes pop { from { opacity: 0; transform: scale(0.8); } to { opacity: 1; transform: scale(1); } }
+
+/* Chart */
+canvas { border-radius: 8px; width: 100%; }
+
+/* Crop feed */
+.feed { display: flex; gap: 8px; flex-wrap: wrap; max-height: 400px; overflow-y: auto; padding: 8px; background: #0d1117; border-radius: 8px; }
+.feed-item { text-align: center; }
+.feed-item img { width: 120px; height: 90px; object-fit: contain; background: #fff; border-radius: 4px; cursor: pointer; }
+.feed-item .tag { font-size: 10px; padding: 2px 6px; border-radius: 3px; font-weight: bold; margin-top: 3px; display: inline-block; }
+.tag-dialogue { background: #4ecca3; color: #000; }
+.tag-junk { background: #e94560; color: #fff; }
+
+/* Test results */
+.test-row { display: flex; align-items: center; gap: 15px; padding: 12px; background: #0d1117; border-radius: 10px; margin-bottom: 8px; border: 1px solid #30363d; }
+.test-row img { width: 100px; height: 80px; object-fit: contain; background: #fff; border-radius: 6px; cursor: pointer; }
+.test-row .verdict { font-weight: bold; font-size: 18px; }
+.test-row .conf-text { color: #888; font-size: 13px; }
+.conf-bar { width: 120px; height: 8px; background: #21262d; border-radius: 4px; overflow: hidden; margin-top: 4px; }
+.conf-fill { height: 100%; border-radius: 4px; }
+
+/* Fix results */
+.fix-row { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: #1a1a00; border-radius: 6px; margin-bottom: 4px; font-size: 13px; border: 1px solid #30363d; }
+.fix-row .arrow { color: #f0a500; font-weight: bold; font-size: 16px; }
+
+/* Log */
+.log { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 12px; max-height: 250px; overflow-y: auto; font-family: monospace; font-size: 12px; line-height: 1.6; }
+.log .phase-line { color: #f0a500; font-weight: bold; }
+.log .epoch { color: #4ecca3; }
+.log .good { color: #4ecca3; font-weight: bold; }
+.log .warn { color: #e94560; }
+.log .info { color: #8b949e; }
+
+/* Lightbox */
+.lightbox { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.92); z-index: 1000; align-items: center; justify-content: center; }
+.lightbox.show { display: flex; }
+.lightbox img { max-width: 90%; max-height: 85%; object-fit: contain; background: #fff; border-radius: 8px; padding: 10px; }
+.lightbox-close { position: fixed; top: 15px; right: 25px; color: #fff; font-size: 40px; cursor: pointer; z-index: 1001; }
+</style>
+</head>
+<body>
+
+<h1>Custom MangaCNN Training</h1>
+<p class="sub">Our own AI learning to tell real dialogue from junk. Built from scratch, no borrowed models.</p>
+
+<!-- Controls -->
+<div class="card" style="text-align:center;">
+  <div class="phase phase-idle" id="phase">Ready</div>
+  <div style="margin:15px 0;">
+    <button class="btn btn-go" onclick="startTrain()" id="btn-go">Start Training</button>
+    <button class="btn btn-stop" onclick="stopTrain()" id="btn-stop" disabled style="margin-left:10px;">Stop</button>
+  </div>
+  <div class="stats" style="justify-content:center;">
+    <div class="stat"><div class="num" id="n-d">0</div><div class="label">Dialogue</div></div>
+    <div class="stat"><div class="num" id="n-j">0</div><div class="label">Junk</div></div>
+    <div class="stat"><div class="num" id="n-m" style="color:#e94560">No</div><div class="label">Model</div></div>
+  </div>
+</div>
+
+<!-- What AI Sees -->
+<div class="card" id="sec-live" style="display:none;">
+  <h2>What the AI Sees Right Now</h2>
+  <p style="color:#888; font-size:12px; margin-bottom:12px;">These images change every second. Green border = AI got it right. Red = wrong.</p>
+  <div class="live-grid" id="live-grid"></div>
+</div>
+
+<!-- Accuracy -->
+<div class="card" id="sec-acc" style="display:none;">
+  <h2>How Smart Is It?</h2>
+  <div class="acc-wrap">
+    <div class="acc-label"><span>0%</span><span>50%</span><span>100%</span></div>
+    <div class="acc-bar">
+      <div class="acc-fill" id="acc-fill" style="width:0%; background: linear-gradient(90deg, #e94560, #f0a500, #4ecca3);">
+        <span id="acc-text">0%</span>
+      </div>
+    </div>
+  </div>
+  <div class="stats" style="margin-top:12px;">
+    <div class="stat"><div class="num" id="s-ep">0</div><div class="label">Epoch</div></div>
+    <div class="stat"><div class="num" id="s-ta">-</div><div class="label">Train Acc</div></div>
+    <div class="stat"><div class="num" id="s-va">-</div><div class="label">Val Acc</div></div>
+    <div class="stat"><div class="num" id="s-bv">-</div><div class="label">Best</div></div>
+  </div>
+  <canvas id="chart" width="800" height="220"></canvas>
+</div>
+
+<!-- Crop Feed -->
+<div class="card" id="sec-feed" style="display:none;">
+  <h2>Crops Being Generated <span id="gen-prog" style="color:#888;font-size:13px;font-weight:normal;margin-left:8px;"></span></h2>
+  <div class="feed" id="feed"></div>
+</div>
+
+<!-- Fix Labels -->
+<div class="card" id="sec-fix" style="display:none;">
+  <h2>AI Corrected These Labels</h2>
+  <p style="color:#888; font-size:12px; margin-bottom:10px;">The AI found training images that were labeled wrong and fixed them.</p>
+  <div id="fix-list"></div>
+</div>
+
+<!-- Test Results -->
+<div class="card" id="sec-test" style="display:none;">
+  <h2>AI Test Results</h2>
+  <p style="color:#888; font-size:12px; margin-bottom:10px;">The trained AI looks at real manga crops and decides: DIALOGUE or JUNK</p>
+  <div id="test-list"></div>
+</div>
+
+<!-- Log -->
+<div class="card">
+  <h2>Log</h2>
+  <div class="log" id="log"><div class="info">Click "Start Training" to begin.</div></div>
+</div>
+
+<!-- Lightbox -->
+<div class="lightbox" id="lb" onclick="this.classList.remove('show')">
+  <span class="lightbox-close">&times;</span>
+  <img id="lb-img" src="">
+</div>
+
+<script>
+let poll = null;
+let chartData = {train:[], val:[]};
+let seenCrops = new Set();
+let seenFixes = 0;
+
+function lb(src) { document.getElementById('lb-img').src=src; document.getElementById('lb').classList.add('show'); }
+
+const phaseNames = {
+  idle: 'Ready', starting: 'Starting...', generating: 'Generating Training Data',
+  training_r1: 'Training Round 1', fixing_labels: 'Fixing Mislabeled Crops',
+  training_r2: 'Retraining (Round 2)', testing: 'Testing', done: 'All Done!'
+};
+
+async function startTrain() {
+  document.getElementById('btn-go').disabled = true;
+  document.getElementById('btn-stop').disabled = false;
+  seenCrops = new Set(); seenFixes = 0; chartData = {train:[], val:[]};
+  document.getElementById('feed').innerHTML = '';
+  document.getElementById('fix-list').innerHTML = '';
+  document.getElementById('test-list').innerHTML = '';
+  await fetch('/train/start', {method:'POST'});
+  if (!poll) poll = setInterval(doPoll, 800);
+  doPoll();
+}
+
+async function stopTrain() {
+  await fetch('/train/stop', {method:'POST'});
+  document.getElementById('btn-go').disabled = false;
+  document.getElementById('btn-stop').disabled = true;
+}
+
+async function doPoll() {
+  try {
+    const d = await (await fetch('/train/progress')).json();
+
+    // Phase badge
+    const ph = d.phase || 'idle';
+    const badge = document.getElementById('phase');
+    badge.textContent = phaseNames[ph] || ph;
+    badge.className = 'phase ' + (d.active ? 'phase-active' : (ph === 'done' ? 'phase-done' : 'phase-idle'));
+
+    // Show sections
+    if (d.active || ph === 'done') {
+      if (d.train_acc > 0 || d.epoch > 0 || ph.startsWith('training')) {
+        document.getElementById('sec-acc').style.display = '';
+      }
+    }
+    if (d.generating || (d.recent_crops && d.recent_crops.length > 0)) {
+      document.getElementById('sec-feed').style.display = '';
+      document.getElementById('gen-prog').textContent = d.gen_progress || '';
+    }
+    if (d.fix_results && d.fix_results.length > 0) document.getElementById('sec-fix').style.display = '';
+    if (d.test_results && d.test_results.length > 0) document.getElementById('sec-test').style.display = '';
+
+    // --- LIVE IMAGES ---
+    if (d.batch_images && d.batch_images.length > 0 && d.active) {
+      document.getElementById('sec-live').style.display = '';
+      const grid = document.getElementById('live-grid');
+      const t = Date.now();
+      grid.innerHTML = d.batch_images.map(b => {
+        const predColor = b.pred === 'dialogue' ? '#4ecca3' : '#e94560';
+        const cls = b.correct ? 'correct' : 'wrong';
+        const icon = b.correct ? '&#10003;' : '&#10007;';
+        // Image could be from live training (_live_X.png) or from crop dir (dialogue/xxx.png)
+        const imgSrc = b.file.startsWith('_live_') ? '/train/live/'+b.file+'?t='+t : '/train/crop/'+b.file+'?t='+t;
+        return '<div class="live-card '+cls+'">'+
+          '<img src="'+imgSrc+'">'+
+          '<div class="true-label">Was: <b>'+b.true+'</b></div>'+
+          '<div class="pred" style="color:'+predColor+'">'+icon+' '+b.pred.toUpperCase()+'</div>'+
+          '<div class="conf">'+(b.conf*100).toFixed(0)+'% sure</div>'+
+          '</div>';
+      }).join('');
+    }
+    if (!d.active && ph !== 'idle') {
+      document.getElementById('sec-live').style.display = 'none';
+    }
+
+    // --- ACCURACY BAR (live, every poll) ---
+    if (d.train_acc > 0) {
+      const pct = (d.train_acc * 100).toFixed(1);
+      document.getElementById('acc-fill').style.width = Math.min(parseFloat(pct), 100) + '%';
+      document.getElementById('acc-text').textContent = pct + '%';
+      document.getElementById('s-ta').textContent = pct + '%';
+    }
+
+    // --- EPOCH STATS ---
+    if (d.epoch > 0) {
+      const tot = d.total_epochs || 15;
+      const pct = Math.round(d.epoch / tot * 100);
+      document.getElementById('s-ep').textContent = d.epoch + '/' + tot;
+      document.getElementById('s-va').textContent = (d.val_acc * 100).toFixed(1) + '%';
+      document.getElementById('s-bv').textContent = (d.best_val_acc * 100).toFixed(1) + '%';
+      chartData.train = d.train_history || [];
+      chartData.val = d.val_history || [];
+      drawChart();
+    }
+
+    // --- CROP FEED ---
+    if (d.recent_crops) {
+      const feed = document.getElementById('feed');
+      d.recent_crops.forEach(c => {
+        const k = c.type + '/' + c.file;
+        if (!seenCrops.has(k)) {
+          seenCrops.add(k);
+          const div = document.createElement('div');
+          div.className = 'feed-item';
+          div.innerHTML = '<img src="/train/crop/'+c.type+'/'+c.file+'" onclick="lb(this.src)"><div class="tag tag-'+c.type+'">'+c.type+'</div>';
+          feed.appendChild(div);
+          feed.scrollTop = feed.scrollHeight;
+        }
+      });
+    }
+
+    // --- FIX RESULTS ---
+    if (d.fix_results && d.fix_results.length > seenFixes) {
+      const el = document.getElementById('fix-list');
+      for (let i = seenFixes; i < d.fix_results.length; i++) {
+        const f = d.fix_results[i];
+        const div = document.createElement('div');
+        div.className = 'fix-row';
+        div.innerHTML = '<span class="tag tag-'+f.from+'">'+f.from+'</span> <span class="arrow">&rarr;</span> <span class="tag tag-'+f.to+'">'+f.to+'</span> <span>'+f.file+' ('+(f.conf*100).toFixed(0)+'% sure)</span>';
+        el.appendChild(div);
+      }
+      seenFixes = d.fix_results.length;
+    }
+
+    // --- TEST RESULTS ---
+    if (d.test_results && d.test_results.length > 0) {
+      const el = document.getElementById('test-list');
+      if (el.children.length !== d.test_results.length) {
+        el.innerHTML = '';
+        d.test_results.forEach(r => {
+          const isD = r.label === 'DIALOGUE';
+          const c = isD ? '#4ecca3' : '#e94560';
+          const pct = (r.confidence * 100).toFixed(1);
+          const reason = r.reason ? '<div style="color:#888;font-size:12px;margin-top:4px;">'+r.reason+'</div>' : '';
+          el.innerHTML += '<div class="test-row"><img src="/train/debug_crop/'+r.file+'" onclick="lb(this.src)"><div style="flex:1"><div class="verdict" style="color:'+c+'">'+r.label+'</div><div class="conf-text">'+pct+'% confident</div>'+reason+'<div class="conf-bar"><div class="conf-fill" style="width:'+pct+'%;background:'+c+'"></div></div></div></div>';
+        });
+      }
+    }
+
+    // --- LOG ---
+    if (d.log && d.log.length) {
+      const el = document.getElementById('log');
+      el.innerHTML = d.log.map(l => {
+        if (l.startsWith('PHASE')||l.startsWith('TRAINING')||l.startsWith('FIXING')||l.startsWith('TESTING')||l.startsWith('RETRAIN')||l.includes('MangaCNN')) return '<div class="phase-line">'+l+'</div>';
+        if (l.includes('Epoch')) return '<div class="epoch">'+l+'</div>';
+        if (l.includes('Best')||l.includes('DONE')||l.includes('saved')||l.includes('complete')||l.includes('100% ours')) return '<div class="good">'+l+'</div>';
+        if (l.includes('ERROR')) return '<div class="warn">'+l+'</div>';
+        return '<div class="info">'+l+'</div>';
+      }).join('');
+      el.scrollTop = el.scrollHeight;
+    }
+
+    // --- COUNTS ---
+    fetch('/train/status').then(r=>r.json()).then(s => {
+      document.getElementById('n-d').textContent = s.dialogue_count;
+      document.getElementById('n-j').textContent = s.junk_count;
+      document.getElementById('n-m').textContent = s.model_exists ? 'Yes' : 'No';
+      document.getElementById('n-m').style.color = s.model_exists ? '#4ecca3' : '#e94560';
+    });
+
+    // --- DONE ---
+    if (!d.active && !d.generating) {
+      document.getElementById('btn-go').disabled = false;
+      document.getElementById('btn-stop').disabled = true;
+    }
+
+  } catch(e) { console.error(e); }
+}
+
+function drawChart() {
+  const c = document.getElementById('chart'), ctx = c.getContext('2d');
+  const W = c.width, H = c.height;
+  ctx.clearRect(0, 0, W, H);
+  if (!chartData.train.length) return;
+
+  ctx.fillStyle = '#0d1117'; ctx.fillRect(0, 0, W, H);
+  const p = 45, gw = W - p * 2, gh = H - p * 2;
+
+  // Grid lines
+  ctx.strokeStyle = '#21262d'; ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = p + (gh / 4) * i;
+    ctx.beginPath(); ctx.moveTo(p, y); ctx.lineTo(W - p, y); ctx.stroke();
+    ctx.fillStyle = '#888'; ctx.font = '11px monospace';
+    ctx.fillText((100 - i * 25) + '%', 5, y + 4);
+  }
+
+  function drawLine(data, color) {
+    if (data.length < 1) return;
+    const n = Math.max(data.length - 1, 1);
+    // Line
+    ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.beginPath();
+    for (let i = 0; i < data.length; i++) {
+      const x = p + (i / n) * gw, y = p + (1 - data[i]) * gh;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    // Dots + labels
+    ctx.fillStyle = color;
+    for (let i = 0; i < data.length; i++) {
+      const x = p + (i / n) * gw, y = p + (1 - data[i]) * gh;
+      ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 11px sans-serif';
+      ctx.fillText((data[i] * 100).toFixed(0) + '%', x - 14, y - 10);
+      ctx.fillStyle = color;
+    }
+  }
+
+  drawLine(chartData.train, '#4ecca3');
+  drawLine(chartData.val, '#e94560');
+
+  // Legend
+  ctx.fillStyle = '#4ecca3'; ctx.fillRect(W - 160, 10, 12, 12);
+  ctx.fillStyle = '#eee'; ctx.font = '12px sans-serif'; ctx.fillText('Train', W - 143, 21);
+  ctx.fillStyle = '#e94560'; ctx.fillRect(W - 160, 28, 12, 12);
+  ctx.fillStyle = '#eee'; ctx.fillText('Val', W - 143, 39);
+}
+
+// Initial load
+fetch('/train/status').then(r=>r.json()).then(s => {
+  document.getElementById('n-d').textContent = s.dialogue_count;
+  document.getElementById('n-j').textContent = s.junk_count;
+  document.getElementById('n-m').textContent = s.model_exists ? 'Yes' : 'No';
+  document.getElementById('n-m').style.color = s.model_exists ? '#4ecca3' : '#e94560';
+});
+
+// Resume if already running
+fetch('/train/progress').then(r=>r.json()).then(d => {
+  if (d.active || d.generating) {
+    document.getElementById('btn-go').disabled = true;
+    document.getElementById('btn-stop').disabled = false;
+    if (!poll) poll = setInterval(doPoll, 800);
+    doPoll();
+  }
+  if (d.phase === 'done' && d.test_results && d.test_results.length > 0) {
+    // Show previous results
+    document.getElementById('sec-acc').style.display = '';
+    if (d.epoch > 0) {
+      document.getElementById('s-ep').textContent = d.epoch + '/' + (d.total_epochs||15);
+      document.getElementById('s-va').textContent = (d.val_acc*100).toFixed(1)+'%';
+      document.getElementById('s-bv').textContent = (d.best_val_acc*100).toFixed(1)+'%';
+      document.getElementById('s-ta').textContent = (d.train_acc*100).toFixed(1)+'%';
+      document.getElementById('acc-fill').style.width = (d.best_val_acc*100).toFixed(1)+'%';
+      document.getElementById('acc-text').textContent = (d.best_val_acc*100).toFixed(1)+'%';
+      chartData.train = d.train_history||[]; chartData.val = d.val_history||[];
+      drawChart();
+    }
+    document.getElementById('sec-test').style.display = '';
+    const el = document.getElementById('test-list');
+    d.test_results.forEach(r => {
+      const isD = r.label === 'DIALOGUE';
+      const c = isD ? '#4ecca3' : '#e94560';
+      const pct = (r.confidence*100).toFixed(1);
+      el.innerHTML += '<div class="test-row"><img src="/train/debug_crop/'+r.file+'" onclick="lb(this.src)"><div style="flex:1"><div class="verdict" style="color:'+c+'">'+r.label+'</div><div class="conf-text">'+pct+'% confident</div><div class="conf-bar"><div class="conf-fill" style="width:'+pct+'%;background:'+c+'"></div></div></div></div>';
+    });
+    if (d.log) {
+      const logEl = document.getElementById('log');
+      logEl.innerHTML = d.log.map(l => {
+        if (l.includes('MangaCNN')||l.startsWith('TRAINING')||l.startsWith('FIXING')||l.startsWith('TESTING')) return '<div class="phase-line">'+l+'</div>';
+        if (l.includes('Epoch')) return '<div class="epoch">'+l+'</div>';
+        if (l.includes('DONE')||l.includes('saved')) return '<div class="good">'+l+'</div>';
+        return '<div class="info">'+l+'</div>';
+      }).join('');
+    }
+    document.getElementById('phase').textContent = 'All Done!';
+    document.getElementById('phase').className = 'phase phase-done';
+  }
+});
+</script>
+</body>
+</html>

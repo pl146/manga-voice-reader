@@ -7,96 +7,245 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
-      width: 260px;
-      background: #1a1a2e;
-      color: #eee;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      width: 300px;
+      background: #0f0f1a;
+      color: #e0e0e8;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       font-size: 13px;
+      overflow: hidden;
     }
+
+    /* Header with logo */
     .header {
-      background: #e94560;
-      padding: 14px 16px;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      padding: 18px 20px 16px;
+      border-bottom: 1px solid rgba(233, 69, 96, 0.3);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .logo {
+      width: 38px;
+      height: 38px;
+      border-radius: 10px;
+      flex-shrink: 0;
+    }
+    .header-text h1 {
+      font-size: 16px;
       font-weight: 700;
-      font-size: 15px;
       color: #fff;
+      letter-spacing: -0.3px;
     }
-    .header span { font-size: 12px; font-weight: 400; opacity: 0.85; display: block; margin-top: 2px; }
-    .body { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
-    .btn {
-      background: #e94560;
-      color: #fff;
-      border: none;
-      padding: 10px;
+    .header-text p {
+      font-size: 11px;
+      color: rgba(255,255,255,0.5);
+      margin-top: 2px;
+    }
+
+    /* Body */
+    .body {
+      padding: 16px 20px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    /* Server status badge */
+    .status-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      background: rgba(255,255,255,0.03);
       border-radius: 8px;
-      cursor: pointer;
-      font-size: 13px;
-      font-weight: 600;
-      width: 100%;
-      transition: background 0.15s;
+      border: 1px solid rgba(255,255,255,0.06);
     }
-    .btn:hover { background: #c73652; }
-    .btn.secondary {
-      background: #16213e;
-      border: 1px solid #e94560;
-      color: #e94560;
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #555;
+      flex-shrink: 0;
     }
-    .btn.secondary:hover { background: #e94560; color: #fff; }
-    .info {
+    .status-dot.online { background: #3fb950; box-shadow: 0 0 6px rgba(63,185,80,0.4); }
+    .status-dot.offline { background: #f85149; }
+    .status-label {
       font-size: 11px;
-      color: #777;
-      line-height: 1.5;
+      color: #8b949e;
+      flex: 1;
     }
-    .divider { border: none; border-top: 1px solid #0f3460; }
-    .site-list { font-size: 11px; color: #aaa; }
-    .site-list li { padding: 2px 0; }
-    /* FIX: Status line for error messages (e.g. "Cannot run on this page") */
-    #status {
-      font-size: 11px;
-      color: #aaa;
-      min-height: 14px;
-      text-align: center;
-    }
-    /* Server status */
-    #server-status {
+    .status-detail {
       font-size: 10px;
       color: #555;
+    }
+
+    /* Main button */
+    .btn-main {
+      background: linear-gradient(135deg, #e94560 0%, #c73652 100%);
+      color: #fff;
+      border: none;
+      padding: 12px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+      width: 100%;
+      transition: all 0.2s;
+      box-shadow: 0 2px 12px rgba(233, 69, 96, 0.3);
+      letter-spacing: 0.2px;
+    }
+    .btn-main:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 16px rgba(233, 69, 96, 0.4);
+    }
+    .btn-main:active { transform: translateY(0); }
+
+    /* Action feedback */
+    #status {
+      font-size: 11px;
+      color: #f85149;
+      min-height: 0;
       text-align: center;
+    }
+
+    /* Divider */
+    .divider {
+      border: none;
+      border-top: 1px solid rgba(255,255,255,0.06);
+      margin: 2px 0;
+    }
+
+    /* How to use section */
+    .section-title {
+      font-size: 10px;
+      font-weight: 600;
+      color: rgba(255,255,255,0.3);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .steps {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .step {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      font-size: 12px;
+      color: #8b949e;
+      line-height: 1.4;
+    }
+    .step-num {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: rgba(233, 69, 96, 0.15);
+      color: #e94560;
+      font-size: 10px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    /* Compatible sites */
+    .sites {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .site-tag {
+      font-size: 10px;
+      color: #8b949e;
+      background: rgba(255,255,255,0.04);
+      padding: 3px 8px;
+      border-radius: 4px;
+      border: 1px solid rgba(255,255,255,0.06);
+    }
+
+    /* Voice toggle */
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 12px;
+      background: rgba(255,255,255,0.03);
+      border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.06);
+    }
+    .toggle-row label {
+      font-size: 12px;
+      color: #8b949e;
+      cursor: pointer;
+      flex: 1;
+    }
+    .toggle-row input[type="checkbox"] {
+      accent-color: #e94560;
+    }
+    #ai-tts-status {
+      font-size: 10px;
+      color: #555;
+    }
+
+    /* Footer */
+    .footer {
+      font-size: 9px;
+      color: rgba(255,255,255,0.15);
+      text-align: center;
+      padding-top: 4px;
     }
   </style>
 </head>
 <body>
   <div class="header">
-    Manga Voice Reader
-    <span>Auto-reads manga speech bubbles aloud</span>
+    <img class="logo" src="icons/icon128.png" alt="MVR">
+    <div class="header-text">
+      <h1>Manga Voice Reader</h1>
+      <p>AI-powered manga speech reader</p>
+    </div>
   </div>
   <div class="body">
-    <button class="btn" id="btn-open">Open Reader on This Page</button>
-    <!-- FIX: Status line shows errors like "Cannot run on chrome:// pages" -->
+    <div class="status-bar">
+      <div class="status-dot" id="server-dot"></div>
+      <span class="status-label" id="server-label">Checking server...</span>
+      <span class="status-detail" id="server-detail"></span>
+    </div>
+
+    <button class="btn-main" id="btn-open">Open Reader on This Page</button>
+    <button class="btn-main" id="btn-dump" style="background:linear-gradient(135deg,#2d6a9f,#1a4971);box-shadow:0 2px 12px rgba(45,106,159,0.3);font-size:12px;padding:9px;margin-top:4px;">Dump Page Buttons (for debugging)</button>
     <div id="status"></div>
+
     <hr class="divider">
-    <p class="info">How to use:</p>
-    <p class="info">
-      1. Go to any manga website<br>
-      2. Click "Open Reader" above<br>
-      3. Click "Read Page" in the panel<br>
-      4. Highlights + audio play automatically
-    </p>
+
+    <div class="section-title">How to use</div>
+    <div class="steps">
+      <div class="step"><span class="step-num">1</span> Open any manga website</div>
+      <div class="step"><span class="step-num">2</span> Click "Open Reader" above</div>
+      <div class="step"><span class="step-num">3</span> Hit "Read Page" in the floating panel</div>
+    </div>
+
     <hr class="divider">
-    <p class="info">Works on:</p>
-    <ul class="site-list">
-      <li>MangaDex</li>
-      <li>Webtoon</li>
-      <li>MangaPlus</li>
-      <li>MangaKakalot</li>
-      <li>Any site with manga images</li>
-    </ul>
+
+    <div class="section-title">Works on</div>
+    <div class="sites">
+      <span class="site-tag">MangaDex</span>
+      <span class="site-tag">Webtoon</span>
+      <span class="site-tag">MangaPlus</span>
+      <span class="site-tag">MangaKakalot</span>
+      <span class="site-tag">Any manga site</span>
+    </div>
+
     <hr class="divider">
-    <label style="display:flex; align-items:center; gap:8px; font-size:11px; color:#aaa; cursor:pointer;">
-      <input type="checkbox" id="ai-tts-toggle" style="accent-color:#e94560;">
-      AI Voice (experimental, local)
-    </label>
-    <div id="ai-tts-status" style="font-size:10px; color:#555; text-align:center;"></div>
-    <div id="server-status"></div>
+
+    <div class="toggle-row">
+      <label for="ai-tts-toggle">AI Voice (Local Piper TTS)</label>
+      <input type="checkbox" id="ai-tts-toggle">
+    </div>
+    <div id="ai-tts-status"></div>
+
+    <div class="footer">100% local &middot; no cloud APIs</div>
   </div>
   <script src="popup.js"></script>
 </body>

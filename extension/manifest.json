@@ -7,7 +7,8 @@
     "activeTab",
     "storage",
     "scripting",
-    "tabs"
+    "tabs",
+    "downloads"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -17,7 +18,24 @@
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
+      "matches": [
+        "*://mangafire.to/*",
+        "*://*.mangafire.to/*",
+        "*://*.mangadex.org/*",
+        "*://*.mangakakalot.com/*",
+        "*://*.manganato.com/*",
+        "*://*.mangareader.to/*",
+        "*://*.readm.org/*",
+        "*://*.manhuaplus.com/*",
+        "*://*.webtoons.com/*",
+        "*://*.chapmanganato.to/*",
+        "*://*.mangabuddy.com/*",
+        "*://*.mangapill.com/*",
+        "*://*.mangaread.org/*",
+        "*://*.asurascans.com/*",
+        "*://*.reaperscans.com/*",
+        "*://*.flamescans.org/*"
+      ],
       "js": ["content.js"],
       "css": ["styles.css"],
       "run_at": "document_idle"

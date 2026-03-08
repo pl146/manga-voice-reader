@@ -117,12 +117,17 @@ pip install kokoro-onnx soundfile wordninja symspellpy piper-tts torch torchvisi
 
 ### 2. Download Models
 
-Create `server/models/` directory and download:
+Create `server/models/` directory and download these:
 
-- **Kokoro TTS**: `kokoro-v1.0.onnx` + `voices-v1.0.bin` → `server/models/kokoro/`
-- **Piper TTS**: `en_US-lessac-medium.onnx` + `.json` → `server/models/piper/`
-- **Bubble Detector**: `detector.onnx` → `server/models/`
-- **Text Segmenter**: `comictextdetector.pt.onnx` → `server/models/`
+- **Kokoro TTS** → `server/models/kokoro/`
+  - [`kokoro-v1.0.onnx`](https://github.com/thewh1teagle/kokoro-onnx/releases/tag/model-files) (310MB)
+  - [`voices-v1.0.bin`](https://github.com/thewh1teagle/kokoro-onnx/releases/tag/model-files) (27MB)
+- **Piper TTS** (fallback) → `server/models/piper/`
+  - [`en_US-lessac-medium.onnx`](https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_US/lessac/medium) + `.json` config
+- **Bubble Detector** → `server/models/`
+  - [`detector.onnx`](https://huggingface.co/ogkalu/comic-text-and-bubble-detector) (168MB) — RT-DETR-v2 trained on 11,000 comic images
+- **Text Segmenter** → `server/models/`
+  - [`comictextdetector.pt.onnx`](https://huggingface.co/ogkalu/comic-text-and-bubble-detector) (90MB)
 
 ### 3. Start the Server
 
@@ -310,7 +315,7 @@ Getting automatic page advancement to work on manga sites was a multi-day battle
 
 ### CPU Spikes & Fan Noise
 
-**Problem:** Every time the user clicked "Read Page," CPU spiked to ~50% and the PC fans went loud. On a gaming PC with an RTX 3080, this was unnecessary and annoying.
+**Problem:** Every time "Read Page" was clicked, CPU spiked to ~50% and the PC fans went loud. On a gaming PC with an RTX 3080, this was unnecessary and annoying.
 
 **Root cause:** ONNX Runtime, PyTorch, and PaddlePaddle all default to using ALL available CPU threads in parallel. When multiple models run (bubble detection + OCR + text classification), they fight over CPU threads and cause massive spikes.
 
@@ -329,7 +334,7 @@ Getting automatic page advancement to work on manga sites was a multi-day battle
 
 **Fix:** Routed all HTTP requests through the background service worker via `chrome.runtime.sendMessage()`. Service workers are not subject to Mixed Content restrictions. The content script never makes direct HTTP calls anymore — everything goes through the background proxy.
 
-**Gotcha:** After reloading the extension, users must close and reopen the manga tab. The old content script keeps running with a broken `chrome.runtime` connection ("Extension context invalidated").
+**Gotcha:** After reloading the extension, close and reopen the manga tab. The old content script keeps running with a broken `chrome.runtime` connection ("Extension context invalidated").
 
 ---
 
@@ -379,7 +384,7 @@ Tested 12+ TTS models before settling on Kokoro:
 | Chatterbox | 9/10 | 2.8s/bubble | Installed, then removed — too slow, 4.2GB VRAM |
 | **Kokoro** | **9/10** | **850ms** | **Chosen.** Natural, emotional, 54 voices, 337MB |
 
-Chatterbox was installed and working but removed at user's request — 2.8s per bubble delay was too noticeable vs Kokoro's 850ms. Removing it also freed 4.2GB VRAM and cut server startup from 30s to 13s.
+Chatterbox was installed and working but removed — 2.8s per bubble delay was too noticeable vs Kokoro's 850ms. Removing it also freed 4.2GB VRAM and cut server startup from 30s to 13s.
 
 **Piper optimization journey:** Started with subprocess spawning (2-3s per sentence, loading model each time) → persistent subprocess (unreliable) → Python API with in-memory model (748ms high, 94ms medium) → JIT warmup at startup (37-82ms). Then switched to Kokoro entirely.
 

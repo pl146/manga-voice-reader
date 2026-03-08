@@ -1,16 +1,37 @@
+# Python
 server/venv/
-server/credentials.json
-server/debug_last.jpg
-server/models/production_detector/
-server/models/baseline_detector/
-server/models/baseline_recognizer/
-server/models/trained_fonts/
-server/models/runs/
-server/models/backup/
-server/datasets/manga_pages/
-server/datasets/cropped_text/
-server/datasets/validation/
 __pycache__/
-node_modules/
-.vercel/
+*.pyc
+
+# Models (too large for git)
+server/models/
+server/learning/
+
+# Debug / test output
+server/debug_crops/
+server/debug_frames/
+server/debug_last.jpg
+server/test_images/
+server/test_results/
+server/batch_results/
+server/extension_debug.log*
+server/training/
+
+# Datasets
+server/dataset/
+server/datasets/
+
+# Credentials / env
+server/credentials.json
+server/.env
+server/.env .txt
+.env
+
+# Platform
 .DS_Store
+.vercel/
+node_modules/
+*.bak
+
+# Backups
+server/server.py.bak
