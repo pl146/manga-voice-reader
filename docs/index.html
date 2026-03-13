@@ -1,0 +1,730 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MangaVoice - Hear Your Manga</title>
+<meta name="description" content="AI-powered Chrome extension that reads manga speech bubbles aloud. 100% local, no cloud.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #06060c;
+    --neon: #7dd3fc;
+    --neon2: #a78bfa;
+    --pink: #f472b6;
+    --green: #4ade80;
+    --text: #e2e8f0;
+    --dim: #64748b;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html { scroll-behavior:smooth; }
+  body {
+    background:var(--bg);
+    color:var(--text);
+    font-family:'Outfit',sans-serif;
+    overflow-x:hidden;
+    line-height:1.6;
+  }
+
+  /* ═══ CANVAS ═══ */
+  #bg-canvas {
+    position:fixed; inset:0; z-index:0; pointer-events:none;
+  }
+
+  /* ═══ NAV ═══ */
+  nav {
+    position:fixed; top:0; width:100%; z-index:100;
+    padding:16px 32px;
+    display:flex; justify-content:space-between; align-items:center;
+    background:rgba(6,6,12,0.7); backdrop-filter:blur(20px);
+    border-bottom:1px solid rgba(255,255,255,0.04);
+  }
+  .nav-logo { font-family:'Space Grotesk',monospace; font-weight:700; font-size:18px; }
+  .nav-logo span { color:var(--neon); }
+  .nav-links { display:flex; gap:24px; }
+  .nav-links a { color:var(--dim); text-decoration:none; font-size:13px; transition:color .3s; }
+  .nav-links a:hover { color:var(--neon); }
+
+  /* ═══ HERO ═══ */
+  .hero {
+    min-height:100vh;
+    display:flex; flex-direction:column;
+    justify-content:center; align-items:center;
+    text-align:center;
+    padding:120px 24px 60px;
+    position:relative; z-index:1;
+  }
+  .hero-badge {
+    display:inline-flex; align-items:center; gap:8px;
+    background:rgba(125,211,252,0.06);
+    border:1px solid rgba(125,211,252,0.12);
+    border-radius:100px; padding:5px 16px;
+    font-size:11px; color:var(--neon); font-weight:600;
+    letter-spacing:1px; text-transform:uppercase;
+    margin-bottom:28px;
+  }
+  .hero-badge .dot { width:6px; height:6px; background:var(--neon); border-radius:50%; animation:blink 2s infinite; }
+  @keyframes blink { 0%,100%{opacity:1}50%{opacity:.3} }
+
+  h1 {
+    font-family:'Space Grotesk',monospace;
+    font-size:clamp(36px,8vw,82px);
+    font-weight:700; line-height:1.0;
+    letter-spacing:-3px; margin-bottom:20px;
+  }
+  .grad {
+    background:linear-gradient(135deg,var(--neon),var(--neon2),var(--pink));
+    -webkit-background-clip:text; background-clip:text;
+    -webkit-text-fill-color:transparent;
+    background-size:200% 200%;
+    animation:gradShift 4s ease infinite;
+  }
+  @keyframes gradShift { 0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%} }
+
+  .hero-sub { color:var(--dim); font-size:17px; max-width:480px; margin:0 auto 36px; font-weight:300; }
+
+  .hero-btns { display:flex; gap:14px; justify-content:center; flex-wrap:wrap; }
+  .btn {
+    display:inline-flex; align-items:center; gap:8px;
+    padding:13px 26px; border-radius:12px;
+    font-size:14px; font-weight:600;
+    text-decoration:none; border:none;
+    font-family:inherit; cursor:pointer;
+    transition:all .3s;
+  }
+  .btn-main {
+    background:linear-gradient(135deg,var(--neon),var(--neon2));
+    color:#0a0a1a;
+    box-shadow:0 0 30px rgba(125,211,252,0.2),0 0 60px rgba(167,139,250,0.1);
+  }
+  .btn-main:hover { transform:translateY(-2px); box-shadow:0 0 50px rgba(125,211,252,0.35); }
+  .btn-sec {
+    background:rgba(255,255,255,0.04);
+    color:var(--text);
+    border:1px solid rgba(255,255,255,0.08);
+  }
+  .btn-sec:hover { background:rgba(255,255,255,0.08); }
+
+  /* ═══ LIVE DEMO ═══ */
+  .demo-wrap {
+    margin:60px auto 0;
+    max-width:600px; width:100%;
+    position:relative;
+  }
+  .demo-box {
+    background:rgba(255,255,255,0.02);
+    border:1px solid rgba(255,255,255,0.06);
+    border-radius:16px;
+    padding:24px;
+    position:relative;
+    overflow:hidden;
+  }
+  .demo-box::before {
+    content:''; position:absolute; inset:-1px;
+    border-radius:16px;
+    background:conic-gradient(from 0deg,transparent,var(--neon),transparent,var(--neon2),transparent);
+    opacity:0.15;
+    animation:borderSpin 6s linear infinite;
+    z-index:-1;
+  }
+  @keyframes borderSpin { to { transform:rotate(360deg); } }
+
+  .demo-header {
+    display:flex; align-items:center; gap:8px;
+    margin-bottom:16px; font-size:11px; color:var(--dim);
+    font-family:'Space Grotesk',monospace;
+  }
+  .demo-dots { display:flex; gap:5px; }
+  .demo-dots span { width:8px; height:8px; border-radius:50%; }
+  .demo-dots span:nth-child(1) { background:#ff5f57; }
+  .demo-dots span:nth-child(2) { background:#febc2e; }
+  .demo-dots span:nth-child(3) { background:#28c840; }
+
+  .demo-manga {
+    background:rgba(255,255,255,0.03);
+    border-radius:8px;
+    height:200px;
+    position:relative;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    overflow:hidden;
+  }
+
+  /* Simulated speech bubbles */
+  .sim-bubble {
+    position:absolute;
+    border:2px solid transparent;
+    border-radius:8px;
+    transition:all .6s;
+    display:flex; align-items:center; justify-content:center;
+    font-family:'Space Grotesk',monospace;
+    font-size:10px; font-weight:600;
+    color:transparent;
+    padding:6px 10px;
+    text-align:center;
+  }
+  .sim-bubble.detected {
+    border-color:var(--neon);
+    box-shadow:0 0 15px rgba(125,211,252,0.2),inset 0 0 15px rgba(125,211,252,0.05);
+    color:var(--text);
+  }
+  .sim-bubble.speaking {
+    border-color:var(--pink);
+    box-shadow:0 0 20px rgba(244,114,182,0.3),inset 0 0 20px rgba(244,114,182,0.08);
+    background:rgba(244,114,182,0.06);
+  }
+
+  .demo-status {
+    margin-top:12px;
+    font-size:11px;
+    font-family:'Space Grotesk',monospace;
+    color:var(--neon);
+    min-height:16px;
+    display:flex; align-items:center; gap:6px;
+  }
+  .demo-status .wave {
+    display:inline-flex; gap:2px; align-items:end; height:12px;
+  }
+  .demo-status .wave span {
+    width:2px; background:var(--pink); border-radius:1px;
+    animation:miniWave .8s ease-in-out infinite;
+  }
+  @keyframes miniWave { 0%,100%{height:3px}50%{height:12px} }
+
+  /* ═══ SPEED LINES DIVIDER ═══ */
+  .speed-lines {
+    height:120px;
+    position:relative; z-index:1;
+    overflow:hidden;
+  }
+  .speed-lines span {
+    position:absolute;
+    height:1px;
+    background:linear-gradient(90deg,transparent,rgba(125,211,252,0.15),transparent);
+    animation:speedLine 2s linear infinite;
+  }
+  @keyframes speedLine { 0%{transform:translateX(-100%)}100%{transform:translateX(100vw)} }
+
+  /* ═══ SECTIONS ═══ */
+  .section {
+    padding:80px 24px;
+    max-width:1000px;
+    margin:0 auto;
+    position:relative; z-index:1;
+  }
+  .section-tag {
+    font-size:10px; font-weight:700;
+    letter-spacing:3px; text-transform:uppercase;
+    color:var(--neon); margin-bottom:12px;
+  }
+  h2 {
+    font-family:'Space Grotesk',monospace;
+    font-size:clamp(26px,4vw,42px);
+    font-weight:700; letter-spacing:-1px;
+    margin-bottom:16px; line-height:1.1;
+  }
+  .section-sub { color:var(--dim); font-size:15px; max-width:480px; margin-bottom:48px; }
+
+  /* ═══ MANGA PANEL GRID ═══ */
+  .manga-grid {
+    display:grid;
+    grid-template-columns:repeat(3,1fr);
+    gap:3px;
+    border:3px solid rgba(255,255,255,0.9);
+    border-radius:4px;
+    overflow:hidden;
+    background:rgba(255,255,255,0.9);
+  }
+  @media(max-width:700px) { .manga-grid { grid-template-columns:1fr; } }
+
+  .manga-cell {
+    background:var(--bg);
+    padding:28px 22px;
+    position:relative;
+    transition:all .5s;
+    min-height:180px;
+    display:flex; flex-direction:column; justify-content:end;
+  }
+  .manga-cell::before {
+    content:'';
+    position:absolute; inset:0;
+    opacity:0;
+    transition:opacity .5s;
+  }
+  .manga-cell:nth-child(1)::before { background:radial-gradient(ellipse at 30% 30%,rgba(125,211,252,0.08),transparent 70%); }
+  .manga-cell:nth-child(2)::before { background:radial-gradient(ellipse at 50% 30%,rgba(167,139,250,0.08),transparent 70%); }
+  .manga-cell:nth-child(3)::before { background:radial-gradient(ellipse at 70% 30%,rgba(244,114,182,0.08),transparent 70%); }
+  .manga-cell:hover::before { opacity:1; }
+  .manga-cell:hover { transform:scale(1.02); z-index:2; }
+
+  .cell-num {
+    font-family:'Space Grotesk',monospace;
+    font-size:48px; font-weight:700;
+    line-height:1;
+    margin-bottom:12px;
+  }
+  .manga-cell:nth-child(1) .cell-num { color:var(--neon); }
+  .manga-cell:nth-child(2) .cell-num { color:var(--neon2); }
+  .manga-cell:nth-child(3) .cell-num { color:var(--pink); }
+
+  .cell-title {
+    font-family:'Space Grotesk',monospace;
+    font-size:16px; font-weight:700;
+    margin-bottom:6px;
+  }
+  .cell-desc { color:var(--dim); font-size:12px; line-height:1.5; }
+
+  /* ═══ HOW - CINEMATIC STEPS ═══ */
+  .cinema {
+    display:flex; flex-direction:column; gap:0;
+  }
+  .cinema-step {
+    display:grid;
+    grid-template-columns:80px 1fr;
+    gap:0;
+    padding:32px 0;
+    border-bottom:1px solid rgba(255,255,255,0.04);
+    opacity:0; transform:translateX(-30px);
+    transition:all .6s;
+  }
+  .cinema-step.visible { opacity:1; transform:translateX(0); }
+
+  .cinema-num {
+    font-family:'Space Grotesk',monospace;
+    font-size:36px; font-weight:700;
+    color:rgba(255,255,255,0.06);
+    transition:color .5s;
+  }
+  .cinema-step.visible .cinema-num { color:var(--neon); }
+
+  .cinema-step h3 {
+    font-family:'Space Grotesk',monospace;
+    font-size:18px; font-weight:700;
+    margin-bottom:6px;
+  }
+  .cinema-step p { color:var(--dim); font-size:13px; }
+
+  /* ═══ STATS BAR ═══ */
+  .stats {
+    display:grid;
+    grid-template-columns:repeat(4,1fr);
+    gap:2px;
+    background:rgba(255,255,255,0.06);
+    border-radius:12px;
+    overflow:hidden;
+    margin:60px 0;
+  }
+  @media(max-width:600px) { .stats { grid-template-columns:repeat(2,1fr); } }
+  .stat {
+    background:var(--bg);
+    padding:28px 20px;
+    text-align:center;
+  }
+  .stat-val {
+    font-family:'Space Grotesk',monospace;
+    font-size:32px; font-weight:700;
+    margin-bottom:4px;
+  }
+  .stat:nth-child(1) .stat-val { color:var(--neon); }
+  .stat:nth-child(2) .stat-val { color:var(--neon2); }
+  .stat:nth-child(3) .stat-val { color:var(--pink); }
+  .stat:nth-child(4) .stat-val { color:var(--green); }
+  .stat-label { font-size:11px; color:var(--dim); letter-spacing:1px; text-transform:uppercase; }
+
+  /* ═══ PRIVACY ═══ */
+  .priv-row {
+    display:grid;
+    grid-template-columns:repeat(3,1fr);
+    gap:16px;
+  }
+  @media(max-width:700px) { .priv-row { grid-template-columns:1fr; } }
+  .priv-card {
+    padding:24px 20px;
+    border:1px solid rgba(255,255,255,0.05);
+    border-radius:12px;
+    background:rgba(255,255,255,0.015);
+    transition:all .3s;
+  }
+  .priv-card:hover {
+    border-color:rgba(74,222,128,0.2);
+    box-shadow:0 0 30px rgba(74,222,128,0.06);
+  }
+  .priv-icon { font-size:24px; margin-bottom:12px; }
+  .priv-card h4 { font-family:'Space Grotesk',monospace; font-size:14px; font-weight:700; margin-bottom:6px; }
+  .priv-card p { color:var(--dim); font-size:11px; line-height:1.5; }
+
+  /* ═══ CTA ═══ */
+  .cta {
+    text-align:center;
+    padding:100px 24px 60px;
+    position:relative; z-index:1;
+  }
+  .cta h2 { margin-bottom:12px; }
+  .cta p { color:var(--dim); margin-bottom:32px; font-size:15px; }
+  .cta .btn-main { font-size:16px; padding:16px 40px; }
+
+  /* ═══ FOOTER ═══ */
+  footer {
+    border-top:1px solid rgba(255,255,255,0.04);
+    padding:24px 32px;
+    display:flex; justify-content:space-between; align-items:center;
+    max-width:1000px; margin:0 auto;
+    position:relative; z-index:1;
+  }
+  footer span { color:rgba(100,116,139,0.5); font-size:11px; }
+
+  /* ═══ SCROLL REVEAL ═══ */
+  .reveal {
+    opacity:0; transform:translateY(24px);
+    transition:opacity .7s, transform .7s;
+  }
+  .reveal.vis { opacity:1; transform:translateY(0); }
+
+  /* ═══ RESPONSIVE ═══ */
+  @media(max-width:640px) {
+    nav { padding:12px 16px; }
+    .nav-links { gap:16px; }
+    .hero { padding:100px 16px 40px; }
+    .hero-btns { flex-direction:column; align-items:center; }
+    .section, .cta { padding-left:16px; padding-right:16px; }
+    footer { flex-direction:column; gap:8px; text-align:center; }
+    .demo-wrap { margin-top:40px; }
+  }
+</style>
+</head>
+<body>
+
+<canvas id="bg-canvas"></canvas>
+
+<nav>
+  <div class="nav-logo">Manga<span>Voice</span></div>
+  <div class="nav-links">
+    <a href="#features">Features</a>
+    <a href="#how">How it works</a>
+    <a href="#privacy">Privacy</a>
+    <a href="https://github.com/pl146/manga-voice-reader" target="_blank">GitHub</a>
+  </div>
+</nav>
+
+<!-- ═══ HERO ═══ -->
+<section class="hero">
+  <div class="hero-badge"><span class="dot"></span> 100% LOCAL AI</div>
+  <h1>Your manga<br><span class="grad">has a voice now</span></h1>
+  <p class="hero-sub">
+    AI detects every speech bubble, reads the text, speaks it aloud.
+    Everything on your Mac. No cloud. No data leaves.
+  </p>
+  <div class="hero-btns">
+    <a class="btn btn-main" href="https://github.com/pl146/manga-voice-reader" target="_blank">Get MangaVoice</a>
+    <a class="btn btn-sec" href="#how">See how it works</a>
+  </div>
+
+  <!-- Live demo simulation -->
+  <div class="demo-wrap">
+    <div class="demo-box">
+      <div class="demo-header">
+        <div class="demo-dots"><span></span><span></span><span></span></div>
+        <span style="margin-left:auto">MangaVoice Reader</span>
+      </div>
+      <div class="demo-manga" id="demo-manga">
+        <div class="sim-bubble" style="top:12%;left:8%;width:120px;height:50px" data-text="We have to hurry!">We have to hurry!</div>
+        <div class="sim-bubble" style="top:10%;right:10%;width:130px;height:55px" data-text="I won't give up!">I won't give up!</div>
+        <div class="sim-bubble" style="bottom:25%;left:15%;width:140px;height:50px" data-text="Protect the village!">Protect the village!</div>
+        <div class="sim-bubble" style="bottom:12%;right:8%;width:110px;height:50px" data-text="Let's go!!">Let's go!!</div>
+        <!-- Speed lines -->
+        <svg style="position:absolute;inset:0;width:100%;height:100%;opacity:0.04" viewBox="0 0 600 200">
+          <line x1="0" y1="40" x2="600" y2="50" stroke="white" stroke-width="1"/>
+          <line x1="0" y1="90" x2="600" y2="85" stroke="white" stroke-width="0.5"/>
+          <line x1="0" y1="140" x2="600" y2="145" stroke="white" stroke-width="1"/>
+          <line x1="0" y1="170" x2="600" y2="165" stroke="white" stroke-width="0.5"/>
+        </svg>
+      </div>
+      <div class="demo-status" id="demo-status"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ SPEED LINES ═══ -->
+<div class="speed-lines" id="speed-lines"></div>
+
+<!-- ═══ FEATURES (MANGA PANELS) ═══ -->
+<div class="section reveal" id="features">
+  <div class="section-tag">Features</div>
+  <h2>Three AI models,<br>one seamless flow</h2>
+  <p class="section-sub">From screenshot to voice in under 2 seconds. All on your Mac's Neural Engine.</p>
+
+  <div class="manga-grid">
+    <div class="manga-cell">
+      <div class="cell-num">01</div>
+      <div class="cell-title">Bubble Detection</div>
+      <div class="cell-desc">RT-DETR neural network finds every speech bubble. Irregular shapes, overlapping panels, dark backgrounds.</div>
+    </div>
+    <div class="manga-cell">
+      <div class="cell-num">02</div>
+      <div class="cell-title">Apple Vision OCR</div>
+      <div class="cell-desc">macOS Neural Engine reads text with near-perfect accuracy. Dark bubbles auto-invert. Small text enhanced.</div>
+    </div>
+    <div class="manga-cell">
+      <div class="cell-num">03</div>
+      <div class="cell-title">Piper TTS</div>
+      <div class="cell-desc">Natural voice speaks each bubble. Auto-reads page by page. Skip, pause, adjust speed from 0.5x to 2x.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ STATS ═══ -->
+<div class="section">
+  <div class="stats reveal">
+    <div class="stat"><div class="stat-val">&lt;2s</div><div class="stat-label">Per Page</div></div>
+    <div class="stat"><div class="stat-val">0</div><div class="stat-label">Cloud Calls</div></div>
+    <div class="stat"><div class="stat-val">$0</div><div class="stat-label">Cost</div></div>
+    <div class="stat"><div class="stat-val">13+</div><div class="stat-label">Sites</div></div>
+  </div>
+</div>
+
+<!-- ═══ HOW IT WORKS ═══ -->
+<div class="section" id="how">
+  <div class="reveal">
+    <div class="section-tag">How it works</div>
+    <h2>Four steps</h2>
+    <p class="section-sub">Install, open manga, hit play. That's it.</p>
+  </div>
+
+  <div class="cinema">
+    <div class="cinema-step">
+      <div class="cinema-num">01</div>
+      <div>
+        <h3>Install the extension</h3>
+        <p>Load into Chrome. The local server auto-starts on your Mac via launchd.</p>
+      </div>
+    </div>
+    <div class="cinema-step">
+      <div class="cinema-num">02</div>
+      <div>
+        <h3>Open any manga</h3>
+        <p>MangaFire, MangaDex, Webtoons, any site. MangaVoice works everywhere.</p>
+      </div>
+    </div>
+    <div class="cinema-step">
+      <div class="cinema-num">03</div>
+      <div>
+        <h3>Hit play</h3>
+        <p>One click. Page captured, bubbles detected, text extracted, voice generated.</p>
+      </div>
+    </div>
+    <div class="cinema-step">
+      <div class="cinema-num">04</div>
+      <div>
+        <h3>Sit back</h3>
+        <p>Auto-skip advances pages. Bubbles highlight as they're read. Full auto-pilot.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ PRIVACY ═══ -->
+<div class="section reveal" id="privacy">
+  <div class="section-tag">Privacy</div>
+  <h2>Your manga stays<br>on your machine</h2>
+  <p class="section-sub">No cloud. No tracking. No data collection. Period.</p>
+
+  <div class="priv-row">
+    <div class="priv-card">
+      <div class="priv-icon">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="1.5"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+      </div>
+      <h4>Zero cloud calls</h4>
+      <p>No API keys. No subscriptions. No uploads. All AI runs on your hardware.</p>
+    </div>
+    <div class="priv-card">
+      <div class="priv-icon">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="1.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      </div>
+      <h4>No tracking</h4>
+      <p>No analytics. No telemetry. No cookies. We don't know what you read.</p>
+    </div>
+    <div class="priv-card">
+      <div class="priv-icon">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="1.5"><path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4-4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+      </div>
+      <h4>Open source</h4>
+      <p>Every line of code is on GitHub. Read it, fork it, trust it.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ CTA ═══ -->
+<section class="cta">
+  <div class="reveal">
+    <h2>Ready to hear<br><span class="grad">your manga?</span></h2>
+    <p>Free. Open source. Mac only. No sign-up.</p>
+    <a class="btn btn-main" href="https://github.com/pl146/manga-voice-reader" target="_blank">Get MangaVoice on GitHub</a>
+  </div>
+</section>
+
+<footer>
+  <span>MangaVoice &copy; 2026 pl146</span>
+  <span>Built for macOS</span>
+</footer>
+
+<script>
+// ═══ PARTICLE CANVAS ═══
+(() => {
+  const c = document.getElementById('bg-canvas');
+  const ctx = c.getContext('2d');
+  let W, H, particles = [], mouse = {x:0, y:0};
+
+  function resize() { W = c.width = innerWidth; H = c.height = innerHeight; }
+  resize();
+  addEventListener('resize', resize);
+  addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
+
+  // Create particles
+  for (let i = 0; i < 120; i++) {
+    particles.push({
+      x: Math.random() * 2000,
+      y: Math.random() * 4000,
+      r: Math.random() * 1.5 + 0.3,
+      dx: (Math.random() - 0.5) * 0.3,
+      dy: Math.random() * 0.3 + 0.1,
+      o: Math.random() * 0.5 + 0.1,
+      color: ['125,211,252','167,139,250','244,114,182'][Math.floor(Math.random()*3)]
+    });
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+
+    // Scroll offset for parallax
+    const scrollY = window.scrollY || 0;
+
+    for (const p of particles) {
+      p.x += p.dx;
+      p.y += p.dy;
+      p.o += (Math.random() - 0.5) * 0.01;
+      p.o = Math.max(0.05, Math.min(0.5, p.o));
+
+      // Parallax: particles move slower than scroll
+      const drawY = p.y - scrollY * 0.3;
+
+      if (p.y > scrollY + H + 100) { p.y = scrollY - 100; p.x = Math.random() * W; }
+      if (p.x < 0) p.x = W;
+      if (p.x > W) p.x = 0;
+
+      // Mouse repel
+      const dx = p.x - mouse.x, dy = drawY - mouse.y;
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      let ox = 0, oy = 0;
+      if (dist < 100) {
+        const force = (100 - dist) / 100 * 2;
+        ox = (dx / dist) * force;
+        oy = (dy / dist) * force;
+      }
+
+      ctx.beginPath();
+      ctx.arc(p.x + ox, drawY + oy, p.r, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(${p.color},${p.o})`;
+      ctx.fill();
+    }
+
+    // Draw faint connections between close particles
+    for (let i = 0; i < particles.length; i++) {
+      for (let j = i + 1; j < particles.length; j++) {
+        const a = particles[i], b = particles[j];
+        const ay = a.y - scrollY * 0.3, by = b.y - scrollY * 0.3;
+        const dx = a.x - b.x, dy = ay - by;
+        const d = Math.sqrt(dx*dx + dy*dy);
+        if (d < 80) {
+          ctx.beginPath();
+          ctx.moveTo(a.x, ay);
+          ctx.lineTo(b.x, by);
+          ctx.strokeStyle = `rgba(125,211,252,${0.03 * (1 - d/80)})`;
+          ctx.lineWidth = 0.5;
+          ctx.stroke();
+        }
+      }
+    }
+
+    requestAnimationFrame(draw);
+  }
+  draw();
+})();
+
+// ═══ SPEED LINES ═══
+(() => {
+  const el = document.getElementById('speed-lines');
+  for (let i = 0; i < 8; i++) {
+    const s = document.createElement('span');
+    s.style.top = (Math.random() * 100) + '%';
+    s.style.width = (Math.random() * 300 + 100) + 'px';
+    s.style.animationDelay = (Math.random() * 3) + 's';
+    s.style.animationDuration = (Math.random() * 2 + 1.5) + 's';
+    el.appendChild(s);
+  }
+})();
+
+// ═══ LIVE DEMO ANIMATION ═══
+(() => {
+  const bubbles = document.querySelectorAll('.sim-bubble');
+  const status = document.getElementById('demo-status');
+  const texts = ['We have to hurry!', "I won't give up!", 'Protect the village!', 'Let\u2019s go!!'];
+  let step = 0;
+
+  function runCycle() {
+    // Reset all
+    bubbles.forEach(b => { b.classList.remove('detected','speaking'); });
+    status.innerHTML = '<span style="color:var(--dim)">Scanning page...</span>';
+    step = 0;
+
+    // Detect bubbles one by one
+    function detectNext() {
+      if (step >= bubbles.length) {
+        // Start speaking
+        setTimeout(speakAll, 600);
+        return;
+      }
+      bubbles[step].classList.add('detected');
+      status.innerHTML = `<span>Detected bubble ${step+1}/${bubbles.length}</span>`;
+      step++;
+      setTimeout(detectNext, 400);
+    }
+    setTimeout(detectNext, 800);
+  }
+
+  function speakAll() {
+    let si = 0;
+    function speakNext() {
+      if (si >= bubbles.length) {
+        status.innerHTML = '<span style="color:var(--green)">Done. Auto-advancing...</span>';
+        setTimeout(runCycle, 2500);
+        return;
+      }
+      bubbles.forEach(b => b.classList.remove('speaking'));
+      bubbles[si].classList.add('speaking');
+      status.innerHTML = `<div class="wave"><span style="animation-delay:0s"></span><span style="animation-delay:0.1s"></span><span style="animation-delay:0.2s"></span><span style="animation-delay:0.3s"></span><span style="animation-delay:0.4s"></span></div> <span style="color:var(--pink)">"${texts[si]}"</span>`;
+      si++;
+      setTimeout(speakNext, 1800);
+    }
+    speakNext();
+  }
+
+  setTimeout(runCycle, 1500);
+})();
+
+// ═══ SCROLL REVEAL ═══
+const obs = new IntersectionObserver((entries) => {
+  entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('vis'); });
+}, { threshold: 0.15 });
+document.querySelectorAll('.reveal').forEach(el => obs.observe(el));
+
+// Cinema steps
+const stepObs = new IntersectionObserver((entries) => {
+  entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('visible'); });
+}, { threshold: 0.2 });
+document.querySelectorAll('.cinema-step').forEach(el => stepObs.observe(el));
+</script>
+
+</body>
+</html>
