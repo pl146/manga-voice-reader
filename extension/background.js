@@ -1,9 +1,8 @@
 // Background service worker — handles screenshot relay + TTS
 
-const PC_SERVER = 'http://192.168.2.183:5055';
-const PC_LAUNCHER = 'http://192.168.2.183:5056';
 const MAC_SERVER = 'http://127.0.0.1:5055';
-let ACTIVE_SERVER = PC_SERVER;
+const MAC_LAUNCHER = 'http://127.0.0.1:5056';
+let ACTIVE_SERVER = MAC_SERVER;
 
 // Connection state machine: DISCONNECTED → CONNECTING → CONNECTED → RECONNECTING
 let _connState = 'DISCONNECTED';
@@ -29,7 +28,7 @@ function startHeartbeat() {
           }
         });
     }
-  }, 5 * 60 * 1000); // every 5 minutes
+  }, 2 * 60 * 1000); // every 2 minutes
 }
 function stopHeartbeat() {
   if (_heartbeatInterval) { clearInterval(_heartbeatInterval); _heartbeatInterval = null; }
@@ -39,28 +38,22 @@ chrome.runtime.onInstalled.addListener(() => {
   console.log('[MVR] Installed.');
 });
 
-// Auto-detect which server to use: PC first, then MacBook fallback
+// Auto-detect: Mac server first, Mac launcher second
 async function ensureServerRunning() {
   _connState = 'CONNECTING';
 
-  // 1. Try PC server
+  // 1. Try Mac server (instant if already running)
   try {
-    const r = await fetch(`${PC_SERVER}/health`, { signal: AbortSignal.timeout(1500) });
-    if (r.ok) { ACTIVE_SERVER = PC_SERVER; _connState = 'CONNECTED'; _reconnectAttempts = 0; startHeartbeat(); return true; }
+    const r = await fetch(`${MAC_SERVER}/health`, { signal: AbortSignal.timeout(1500) });
+    if (r.ok) { ACTIVE_SERVER = MAC_SERVER; _connState = 'CONNECTED'; _reconnectAttempts = 0; startHeartbeat(); console.log('[MVR] Using Mac server'); return true; }
   } catch (_) {}
 
-  // 2. Try PC launcher
+  // 2. Try Mac launcher to auto-start server
   try {
-    console.log('[MVR] PC server down, trying launcher...');
-    const r = await fetch(`${PC_LAUNCHER}/start`, { signal: AbortSignal.timeout(60000) });
+    console.log('[MVR] Trying Mac launcher...');
+    const r = await fetch(`${MAC_LAUNCHER}/start`, { signal: AbortSignal.timeout(20000) });
     const d = await r.json();
-    if (d.ok) { ACTIVE_SERVER = PC_SERVER; _connState = 'CONNECTED'; _reconnectAttempts = 0; startHeartbeat(); return true; }
-  } catch (_) {}
-
-  // 3. Fall back to MacBook localhost
-  try {
-    const r = await fetch(`${MAC_SERVER}/health`, { signal: AbortSignal.timeout(2000) });
-    if (r.ok) { ACTIVE_SERVER = MAC_SERVER; _connState = 'CONNECTED'; _reconnectAttempts = 0; startHeartbeat(); console.log('[MVR] PC offline, using MacBook'); return true; }
+    if (d.ok) { ACTIVE_SERVER = MAC_SERVER; _connState = 'CONNECTED'; _reconnectAttempts = 0; startHeartbeat(); console.log('[MVR] Mac started via launcher'); return true; }
   } catch (_) {}
 
   _connState = 'DISCONNECTED';
@@ -71,7 +64,7 @@ async function ensureServerRunning() {
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.type === 'READ_SCREEN') {
-    handleReadScreen(request.cropRect, request.dpr || 2, request.pageTitle || '', request.pageUrl || '', request.readingDirection || 'rtl')
+    handleReadScreen(request.cropRect, request.dpr || 2, request.pageTitle || '', request.pageUrl || '', request.readingDirection || 'rtl', request.voice || '_piper', request.speed || 0.9, request.freeText || false)
       .then(r => sendResponse(r))
       .catch(e => sendResponse({ ok: false, error: e.message }));
     return true;
@@ -79,6 +72,74 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.type === 'GET_SERVER') {
     sendResponse({ server: ACTIVE_SERVER });
     return;
+  }
+  if (request.type === 'MVR_GET_STATE') {
+    sendResponse({ state: _connState, server: ACTIVE_SERVER });
+    return;
+  }
+  if (request.type === 'MVR_FETCH_IMAGE') {
+    (async () => {
+      try {
+        const serverUp = await ensureServerRunning();
+        if (!serverUp) { sendResponse({ ok: false, error: 'SERVER_NOT_RUNNING' }); return; }
+        // Fetch the image from the manga site
+        const imgRes = await fetch(request.url);
+        if (!imgRes.ok) { sendResponse({ ok: false, error: 'Image fetch failed: ' + imgRes.status }); return; }
+        const blob = await imgRes.blob();
+        // Convert to base64 data URL
+        const reader = new FileReader();
+        const dataUrl = await new Promise((resolve) => {
+          reader.onloadend = () => resolve(reader.result);
+          reader.readAsDataURL(blob);
+        });
+        // Send to server for processing (retry if models still loading)
+        const res = await fetchWithRetry(`${ACTIVE_SERVER}/process`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            image: dataUrl,
+            cropRect: null,
+            dpr: 1,
+            pageTitle: request.pageTitle || '',
+            pageUrl: request.pageUrl || '',
+            readingDirection: request.readingDirection || 'rtl',
+          }),
+        });
+        if (!res.ok) { sendResponse({ ok: false, error: 'Server error ' + res.status }); return; }
+        const data = await res.json();
+        sendResponse({
+          ok: true,
+          bubbles: data.bubbles || [],
+          timing: data.timing || {},
+        });
+      } catch (e) { sendResponse({ ok: false, error: e.message }); }
+    })();
+    return true;
+  }
+  if (request.type === 'MVR_PROCESS_IMAGE') {
+    // Direct data URL image — send straight to server for processing
+    (async () => {
+      try {
+        const serverUp = await ensureServerRunning();
+        if (!serverUp) { sendResponse({ ok: false, error: 'SERVER_NOT_RUNNING' }); return; }
+        const res = await fetchWithRetry(`${ACTIVE_SERVER}/process`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            image: request.image,
+            cropRect: null,
+            dpr: 1,
+            pageTitle: request.pageTitle || '',
+            pageUrl: request.pageUrl || '',
+            readingDirection: request.readingDirection || 'rtl',
+          }),
+        });
+        if (!res.ok) { sendResponse({ ok: false, error: 'Server error ' + res.status }); return; }
+        const data = await res.json();
+        sendResponse({ ok: true, bubbles: data.bubbles || [], timing: data.timing || {} });
+      } catch (e) { sendResponse({ ok: false, error: e.message }); }
+    })();
+    return true;
   }
   if (request.type === 'MVR_ENSURE_SERVER') {
     ensureServerRunning()
@@ -96,11 +157,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         });
         if (!res.ok) { sendResponse({ ok: false }); return; }
         const buf = await res.arrayBuffer();
-        // Send as base64 since sendResponse can't transfer blobs
+        const contentType = res.headers.get('content-type') || 'audio/wav';
+        // MV3 sendResponse uses JSON — must base64 encode binary data
         const bytes = new Uint8Array(buf);
         let binary = '';
         for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-        sendResponse({ ok: true, audio: btoa(binary), type: res.headers.get('content-type') || 'audio/wav' });
+        const b64 = btoa(binary);
+        sendResponse({ ok: true, audioB64: b64, type: contentType });
       } catch (e) { sendResponse({ ok: false }); }
     })();
     return true;
@@ -124,10 +187,22 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }).catch(() => {});
     return; // fire-and-forget
   }
+  if (request.type === 'MVR_QUALITY_POLL') {
+    (async () => {
+      try {
+        const res = await fetch(`${ACTIVE_SERVER}/process/quality?id=${encodeURIComponent(request.requestId)}`, {
+          signal: AbortSignal.timeout(3000),
+        });
+        if (!res.ok) { sendResponse({ ready: false }); return; }
+        const data = await res.json();
+        sendResponse(data);
+      } catch (e) { sendResponse({ ready: false }); }
+    })();
+    return true;
+  }
   if (request.type === 'MVR_SHUTDOWN') {
     stopHeartbeat();
     _connState = 'DISCONNECTED';
-    fetch(`${ACTIVE_SERVER}/shutdown`, { method: 'POST' }).catch(() => {});
     return;
   }
   if (request.type === 'MVR_HEARTBEAT') {
@@ -142,114 +217,26 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }).catch(() => {});
     return;
   }
-  if (request.type === 'MVR_DUMP_MAIN') {
-    chrome.scripting.executeScript({
-      target: { tabId: sender.tab.id },
-      world: 'MAIN',
-      func: () => {
-        const info = [];
-        info.push('=== MAIN WORLD DUMP ===');
-        info.push('jQuery: ' + (typeof window.jQuery !== 'undefined'));
-        info.push('$: ' + (typeof window.$ !== 'undefined'));
-        if (window.jQuery) {
-          const events = window.jQuery._data(document, 'events');
-          if (events) info.push('Document events: ' + Object.keys(events).join(', '));
-          const body = document.body;
-          const bodyEvents = window.jQuery._data(body, 'events');
-          if (bodyEvents) {
-            info.push('Body events: ' + Object.keys(bodyEvents).join(', '));
-            for (const [type, handlers] of Object.entries(bodyEvents)) {
-              handlers.forEach((h, i) => {
-                info.push('  ' + type + '[' + i + ']: selector="' + (h.selector || '') + '" handler=' + (h.handler?.toString()?.substring(0, 200) || 'n/a'));
-              });
-            }
-          }
-        }
-        info.push('');
-        info.push('=== KEYBOARD LISTENER TEST ===');
-        let keyHandled = false;
-        const testHandler = (e) => { keyHandled = true; info.push('KeyDown caught: key=' + e.key); };
-        document.addEventListener('keydown', testHandler);
-        document.dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowRight', code: 'ArrowRight', keyCode: 39, bubbles: true}));
-        document.removeEventListener('keydown', testHandler);
-        info.push('Keyboard event reached handler: ' + keyHandled);
-        console.log('[MVR MAIN DUMP]\n' + info.join('\n'));
-      },
-    });
-  }
-  if (request.type === 'MVR_SAVE_DUMP') {
-    const blob = new Blob([request.text], { type: 'text/plain' });
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      chrome.downloads.download({
-        url: reader.result,
-        filename: 'mvr-dump.txt',
-        saveAs: false,
-      });
-    };
-    reader.readAsDataURL(blob);
-  }
-  if (request.type === 'MVR_CLICK_PAGE') {
-    chrome.scripting.executeScript({
-      target: { tabId: sender.tab.id },
-      world: 'MAIN',
-      func: (readDir) => {
-        const getPage = () => {
-          const s = document.querySelector('span.current-page, b.current-page');
-          return s ? parseInt(s.textContent.trim()) : 0;
-        };
-        const before = getPage();
-        const isRTL = readDir === 'rtl';
-        let method = 'none';
-
-        // 1. Try data-page link (mangafire.to — most reliable)
-        const activePage = document.querySelector('a[data-page].active');
-        if (activePage) {
-          const cur = parseInt(activePage.dataset.page);
-          // RTL: forward = lower page number. LTR: forward = higher.
-          const target = isRTL ? cur - 1 : cur + 1;
-          const link = document.querySelector(`a[data-page="${target}"]`);
-          if (link) {
-            link.click();
-            method = `data-page ${cur}->${target}`;
-          }
-        }
-
-        // 2. If no data-page, try Swiper API
-        if (method === 'none') {
-          const swiperEls = document.querySelectorAll('.swiper-container, .swiper, [class*="swiper"]');
-          for (const el of swiperEls) {
-            if (el.swiper) {
-              // Try slideNext first, then check if it went the right direction
-              el.swiper.slideNext();
-              method = 'swiper-slideNext';
-              // Validate after a tick
-              setTimeout(() => {
-                const after = getPage();
-                const wentForward = isRTL ? (after < before) : (after > before);
-                if (!wentForward && before > 0) {
-                  // Wrong direction — try slidePrev instead
-                  el.swiper.slidePrev();
-                  el.swiper.slidePrev(); // undo slideNext + go forward
-                  console.log('[MVR] slideNext went wrong direction, used slidePrev');
-                }
-              }, 400);
-              break;
-            }
-          }
-        }
-
-        console.log(`[MVR] MVR_CLICK_PAGE: method=${method}, before=${before}, dir=${readDir}`);
-      },
-      args: [request.direction || 'rtl'],
-    });
-  }
 });
 
 
+// ─── Retry helper for 503 (models still loading) ─────────────────────────
+
+async function fetchWithRetry(url, options, maxRetries = 20, delayMs = 2000) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const res = await fetch(url, options);
+    if (res.status === 503 && attempt < maxRetries) {
+      console.log(`[MVR] Server loading models, retry ${attempt + 1}/${maxRetries} in ${delayMs/1000}s...`);
+      await new Promise(r => setTimeout(r, delayMs));
+      continue;
+    }
+    return res;
+  }
+}
+
 // ─── Screenshot + server relay ────────────────────────────────────────────
 
-async function handleReadScreen(cropRect, dpr, pageTitle, pageUrl, readingDirection) {
+async function handleReadScreen(cropRect, dpr, pageTitle, pageUrl, readingDirection, voice, speed, freeText) {
   let dataUrl;
   try {
     dataUrl = await chrome.tabs.captureVisibleTab(null, { format: 'png' });
@@ -262,7 +249,7 @@ async function handleReadScreen(cropRect, dpr, pageTitle, pageUrl, readingDirect
 
   let res;
   try {
-    res = await fetch(`${ACTIVE_SERVER}/process`, {
+    res = await fetchWithRetry(`${ACTIVE_SERVER}/process`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -272,6 +259,8 @@ async function handleReadScreen(cropRect, dpr, pageTitle, pageUrl, readingDirect
         pageTitle: pageTitle || '',
         pageUrl: pageUrl || '',
         readingDirection: readingDirection || 'rtl',
+        voice: voice || '_piper',
+        speed: speed || 0.9,
       }),
     });
   } catch (err) {
@@ -284,12 +273,52 @@ async function handleReadScreen(cropRect, dpr, pageTitle, pageUrl, readingDirect
   }
 
   const data = await res.json();
+  const bubbles = data.bubbles || [];
+
+  // Free text pass: detect text outside bubbles (separate from bubble pipeline)
+  // Check storage directly in case message flag didn't come through
+  let freeTexts = [];
+  let ftEnabled = freeText;
+  try {
+    const stored = await chrome.storage.local.get('mvrFreeText');
+    if (stored.mvrFreeText) ftEnabled = true;
+  } catch (_) {}
+  console.log('[MVR-bg] freeText flag:', freeText, 'storage:', ftEnabled, 'bubbles:', bubbles.length);
+  if (ftEnabled && bubbles.length === 0) {
+    try {
+      const ftRes = await fetch(`${ACTIVE_SERVER}/process/freetext`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          image: dataUrl,
+          cropRect: cropRect || null,
+          dpr: dpr,
+          readingDirection: readingDirection || 'rtl',
+          bubbleBoxes: bubbles.map(b => ({
+            left: b.left, top: b.top, width: b.width, height: b.height,
+          })),
+        }),
+      });
+      if (ftRes.ok) {
+        const ftData = await ftRes.json();
+        freeTexts = ftData.freeTexts || [];
+        console.log('[MVR] Free text pass:', freeTexts.length, 'regions found');
+      }
+    } catch (e) {
+      console.log('[MVR] Free text pass failed (non-fatal):', e.message);
+    }
+  }
+
   return {
     ok: true,
-    bubbles: data.bubbles || [],
+    bubbles: bubbles,
+    freeTexts: freeTexts,
     actualCropTop: data.actualCropTop || 0,
     actualCropLeft: data.actualCropLeft || 0,
     timing: data.timing || {},
-    actionPage: (data.bubbles || []).length === 0,
+    requestId: data.requestId || null,
+    qualityPending: data.qualityPending || false,
+    audioId: data.audioId || null,
+    actionPage: bubbles.length === 0 && freeTexts.length === 0,
   };
 }

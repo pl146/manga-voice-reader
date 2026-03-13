@@ -1,0 +1,30 @@
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="128" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0a0e1a"/>
+      <stop offset="100%" stop-color="#05070a"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#7dd3fc"/>
+      <stop offset="100%" stop-color="#818cf8"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="128" height="128" rx="28" fill="url(#bg)"/>
+
+  <!-- Speech bubble -->
+  <path
+    d="M28 30h72a14 14 0 0 1 14 14v30a14 14 0 0 1-14 14H70l-16 16V88H28a14 14 0 0 1-14-14V44a14 14 0 0 1 14-14z"
+    fill="none"
+    stroke="url(#accent)"
+    stroke-width="3.5"
+    opacity="0.9"/>
+
+  <!-- Voice/audio bars inside bubble -->
+  <rect x="42" y="48" width="5" height="24" rx="2.5" fill="url(#accent)" opacity="0.7"/>
+  <rect x="52" y="40" width="5" height="40" rx="2.5" fill="url(#accent)"/>
+  <rect x="62" y="46" width="5" height="28" rx="2.5" fill="url(#accent)" opacity="0.85"/>
+  <rect x="72" y="42" width="5" height="36" rx="2.5" fill="url(#accent)" opacity="0.7"/>
+  <rect x="82" y="50" width="5" height="20" rx="2.5" fill="url(#accent)" opacity="0.5"/>
+</svg>

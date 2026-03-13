@@ -1,4 +1,4 @@
-// Manga Voice Reader — Content Script
+// MangaVoice — Content Script
 
 function mvrLog(msg) {
   console.log('[MVR] ' + msg);
@@ -16,34 +16,52 @@ let currentBubbleIndex = -1;
 let totalBubbles = 0;
 let skipDirection = 0; // +1 skip forward, -1 skip back, 0 none
 let availableVoices = [];
-let selectedVoice = 'af_heart';
+let selectedVoice = '_piper'; // default: Piper TTS
 let _prefetchInvalid = false;
-const PC_SERVER = 'http://192.168.2.183:5055';
-const PC_LAUNCHER = 'http://192.168.2.183:5056';
+let freeTextEnabled = false;
 const LOCAL_SERVER = 'http://127.0.0.1:5055';
-let SERVER = PC_SERVER;  // active server, switches automatically
+let SERVER = LOCAL_SERVER;
+
+// Pre-load browser voices (they load async in Chrome)
+let _browserVoices = [];
+function _loadBrowserVoices() {
+  _browserVoices = window.speechSynthesis.getVoices();
+  mvrLog('Browser voices loaded: ' + _browserVoices.length + ' — ' +
+    _browserVoices.filter(v => v.lang.startsWith('en')).map(v => v.name).join(', '));
+}
+_loadBrowserVoices();
+window.speechSynthesis.onvoiceschanged = _loadBrowserVoices;
 
 async function _ensureServer() {
-  // Route through background.js service worker to avoid Mixed Content blocking
-  try {
-    const res = await chrome.runtime.sendMessage({ type: 'MVR_ENSURE_SERVER' });
-    if (res && res.ok) {
-      SERVER = res.server;
-      mvrLog('Connected to ' + SERVER);
-      return true;
+  // Route through background.js service worker (single source of truth)
+  // Retry once if first attempt fails (server may still be starting)
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await chrome.runtime.sendMessage({ type: 'MVR_ENSURE_SERVER' });
+      if (res && res.ok) {
+        SERVER = res.server;
+        mvrLog('Connected to ' + SERVER);
+        const statusEl = document.getElementById('mvr-status');
+        if (statusEl) statusEl.textContent = 'Connected';
+        return true;
+      }
+    } catch (_) {}
+    if (attempt === 0) {
+      mvrLog('Server not found, retrying in 2s...');
+      await new Promise(r => setTimeout(r, 2000));
     }
-  } catch (_) {}
+  }
   mvrLog('No server available');
   return false;
 }
 
 function _shutdownServer() {
   stopSpeaking();
-  if (SERVER === PC_SERVER) {
-    chrome.runtime.sendMessage({ type: 'MVR_SHUTDOWN' }).catch(() => {});
-    mvrLog('PC shutdown signal sent');
-  }
+  // Actually shut down the server to free CPU/GPU
+  fetch(SERVER + '/shutdown', { method: 'POST' }).catch(() => {});
+  mvrLog('Shutdown request sent to server');
 }
+
 
 // Overlay modes: 'reader' (default), 'border', 'debug', 'hidden'
 let overlayMode = 'reader';
@@ -53,13 +71,23 @@ let overlayMode = 'reader';
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'MVR_ACTIVATE') {
     // Auto-start server if needed
-    _ensureServer().then(() => {
+    _ensureServer().then((connected) => {
       if (!panelCreated) {
         createUI();
         panelCreated = true;
       } else {
         const panel = document.getElementById('mvr');
         if (panel) panel.style.display = '';
+      }
+      if (connected) {
+        // Warm up Kokoro voice (skip if using browser TTS)
+        if (selectedVoice !== '_browser') {
+          chrome.runtime.sendMessage({ type: 'MVR_WARM_VOICE', voice: selectedVoice }).catch(() => {});
+        }
+      } else {
+        // Show the panel anyway so user sees the status, but warn them
+        const statusEl = document.getElementById('mvr-status');
+        if (statusEl) statusEl.textContent = 'No server. Run: python3 ~/MangaVoice/server/server_lite.py';
       }
     });
     sendResponse({ ok: true });
@@ -127,79 +155,175 @@ function createUI() {
   const d = document.createElement('div');
   d.id = 'mvr';
   d.innerHTML = `
-    <div id="mvr-head">
-      <div id="mvr-head-title">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-          <path d="M4 4h16a2 2 0 012 2v10a2 2 0 01-2 2H8l-4 4V6a2 2 0 012-2z" fill="rgba(255,255,255,0.85)"/>
-          <rect x="8" y="9" width="2" height="6" rx="1" fill="#c22d4e"/>
-          <rect x="11" y="7" width="2" height="10" rx="1" fill="#c22d4e"/>
-          <rect x="14" y="8" width="2" height="8" rx="1" fill="#c22d4e"/>
-        </svg>
-        <span>Manga Voice Reader</span>
+    <canvas id="mvr-stars"></canvas>
+    <div id="mvr-top">
+      <div id="mvr-title">
+        <span class="mvr-dot"></span>
+        <div>
+          <div class="mvr-title-main">MangaVoice</div>
+          <div id="mvr-status" class="mvr-status-label">Ready</div>
+        </div>
       </div>
-      <button id="mvr-x">\u2715</button>
+      <div id="mvr-top-actions">
+        <button id="mvr-controls-toggle" aria-label="Toggle settings" aria-expanded="false">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6">
+            <path d="M12 15.5a3.5 3.5 0 100-7 3.5 3.5 0 000 7z"/>
+            <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9c.01.69.35 1.32.9 1.71z"/>
+          </svg>
+          <span class="mvr-sr-only">Settings</span>
+        </button>
+        <button id="mvr-x" aria-label="Close MangaVoice">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M6 6L18 18"/>
+            <path d="M18 6L6 18"/>
+          </svg>
+        </button>
+      </div>
     </div>
     <div id="mvr-body">
-      <div id="mvr-status">Ready</div>
       <div id="mvr-progress-wrap" style="display:none;">
         <div id="mvr-progress-bar"></div>
       </div>
-      <div id="mvr-row-idle">
-        <button id="mvr-go">\u25B6 Read Page</button>
+      <div class="mvr-text-row">
+        <div id="mvr-text" role="log" aria-live="polite"></div>
       </div>
-      <div id="mvr-row-reading" style="display:none;">
-        <button id="mvr-pause">\u275A\u275A</button>
-        <button id="mvr-stop">\u25A0 Stop</button>
+      <div id="mvr-url-bar"></div>
+      <div class="mvr-actions">
+        <div id="mvr-row-idle">
+          <button id="mvr-go" class="mvr-icon-pill" aria-label="Read this page">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <path d="M8 5v14l11-7z"/>
+            </svg>
+          </button>
+        </div>
+        <div id="mvr-row-reading" style="display:none;">
+          <button id="mvr-pause" class="mvr-icon-pill" aria-label="Pause reading">
+            <svg class="mvr-icon-pause" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M7 5h3v14H7zM14 5h3v14h-3z"/>
+            </svg>
+            <svg class="mvr-icon-play" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M8 5v14l11-7z"/>
+            </svg>
+          </button>
+          <button id="mvr-stop" class="mvr-icon-pill" aria-label="Stop reading">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <rect x="7" y="7" width="10" height="10" rx="2"/>
+            </svg>
+          </button>
+        </div>
       </div>
-      <div id="mvr-text"></div>
-      <button id="mvr-controls-toggle">\u25BC Settings</button>
-      <div id="mvr-controls">
-        <label>Voice <select id="mvr-voice"><option value="af_heart">Heart</option></select></label>
-        <label>Speed <input type="range" id="mvr-speed" min="0.5" max="2" step="0.1" value="0.85"> <span id="mvr-sv">0.85x</span></label>
-        <label>Overlay <select id="mvr-overlay-mode">
-          <option value="reader">Reader</option>
-          <option value="border">Border</option>
-          <option value="debug">Debug</option>
-          <option value="hidden">Hidden</option>
-        </select></label>
-        <label>Read \u2192 <select id="mvr-direction">
-          <option value="rtl">RTL</option>
-          <option value="ltr">LTR</option>
-          <option value="vertical">Vertical</option>
-        </select></label>
-        <label id="mvr-auto-label"><input type="checkbox" id="mvr-auto"> Auto-read</label>
-        <div id="mvr-keys">Space: play/pause \u00B7 \u2190\u2192: skip</div>
+      <div id="mvr-controls-wrapper">
+        <div id="mvr-controls" class="collapsed">
+          <label>
+            <span class="mvr-label-title">Voice</span>
+            <select id="mvr-voice"><option value="_piper">Piper</option><option value="_browser">System Voice</option></select>
+          </label>
+          <label>
+            <span class="mvr-label-title">Speed</span>
+            <div class="mvr-speed-row">
+              <input type="range" id="mvr-speed" min="0.5" max="2" step="0.1" value="0.85">
+              <span id="mvr-sv">0.85x</span>
+            </div>
+          </label>
+          <label>
+            <span class="mvr-label-title">Overlay</span>
+            <select id="mvr-overlay-mode">
+              <option value="reader">Reader</option>
+              <option value="border">Border</option>
+              <option value="debug">Debug</option>
+              <option value="hidden">Hidden</option>
+            </select>
+          </label>
+          <label>
+            <span class="mvr-label-title">Read →</span>
+            <select id="mvr-direction">
+              <option value="rtl">RTL</option>
+              <option value="ltr">LTR</option>
+              <option value="vertical">Vertical</option>
+            </select>
+          </label>
+          <label id="mvr-auto-label" class="mvr-checkbox">
+            <input type="checkbox" id="mvr-auto">
+            <span>Auto-read</span>
+          </label>
+          <label class="mvr-checkbox">
+            <input type="checkbox" id="mvr-show-marks" checked>
+            <span>Show marks</span>
+          </label>
+          <label class="mvr-checkbox">
+            <input type="checkbox" id="mvr-free-text">
+            <span>Free text</span>
+          </label>
+          <div id="mvr-keys">Space: play/pause · ←→: skip</div>
+        </div>
       </div>
     </div>`;
   document.body.appendChild(d);
 
-  // Drag
-  const head = d.querySelector('#mvr-head');
-  let dragging = false, dx = 0, dy = 0;
-  head.addEventListener('mousedown', (e) => {
-    dragging = true; dx = e.clientX - d.offsetLeft; dy = e.clientY - d.offsetTop; e.preventDefault();
-  }, true);
-  document.addEventListener('mousemove', (e) => {
-    if (!dragging) return;
-    d.style.left = (e.clientX - dx) + 'px'; d.style.top = (e.clientY - dy) + 'px';
-    d.style.right = 'auto'; d.style.bottom = 'auto';
-  }, true);
-  document.addEventListener('mouseup', () => { dragging = false; }, true);
+  // Starfield animation
+  (() => {
+    const c = document.getElementById('mvr-stars');
+    if (!c) return;
+    const ctx = c.getContext('2d');
+    let stars = [], raf;
+    function resize() {
+      const rect = d.getBoundingClientRect();
+      c.width = rect.width * 2;
+      c.height = rect.height * 2;
+      c.style.width = rect.width + 'px';
+      c.style.height = rect.height + 'px';
+    }
+    function init() {
+      resize();
+      stars = [];
+      for (let i = 0; i < 40; i++) {
+        stars.push({
+          x: Math.random() * c.width,
+          y: Math.random() * c.height,
+          r: Math.random() * 2 + 0.6,
+          dx: (Math.random() - 0.5) * 0.5,
+          dy: Math.random() * 0.3 + 0.1,
+          o: Math.random() * 0.7 + 0.3,
+        });
+      }
+    }
+    function draw() {
+      ctx.clearRect(0, 0, c.width, c.height);
+      for (const s of stars) {
+        s.x += s.dx;
+        s.y += s.dy;
+        s.o += (Math.random() - 0.5) * 0.015;
+        s.o = Math.max(0.08, Math.min(0.6, s.o));
+        if (s.y > c.height) { s.y = 0; s.x = Math.random() * c.width; }
+        if (s.x < 0) s.x = c.width;
+        if (s.x > c.width) s.x = 0;
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255,255,255,${s.o})`;
+        ctx.fill();
+      }
+      raf = requestAnimationFrame(draw);
+    }
+    init();
+    draw();
+    // Resize when panel expands/collapses
+    new ResizeObserver(() => { resize(); }).observe(d);
+  })();
 
   document.getElementById('mvr-x').addEventListener('click', () => {
     stopSpeaking(); removeHighlights(); d.remove(); panelCreated = false; autoReadEnabled = false;
-    _shutdownServer();
   }, true);
   // Settings toggle — start collapsed
   const ctrlPanel = document.getElementById('mvr-controls');
   const ctrlToggle = document.getElementById('mvr-controls-toggle');
   ctrlPanel.classList.add('collapsed');
+  ctrlToggle.setAttribute('aria-expanded', 'false');
   ctrlToggle.addEventListener('click', () => {
     const collapsed = ctrlPanel.classList.toggle('collapsed');
-    ctrlToggle.textContent = collapsed ? '\u25BC Settings' : '\u25B2 Settings';
+    ctrlToggle.setAttribute('aria-expanded', (!collapsed).toString());
+    ctrlToggle.classList.toggle('open', !collapsed);
   });
   document.getElementById('mvr-go').addEventListener('click', () => {
-    // Force stop any current reading first, then start fresh
     if (speaking) {
       stopSpeaking();
       setTimeout(readPage, 100);
@@ -229,6 +353,14 @@ function createUI() {
       setStatus('Auto-read OFF.');
     }
   }, true);
+  document.getElementById('mvr-show-marks').addEventListener('change', (e) => {
+    if (!e.target.checked) removeHighlights();
+    chrome.storage.local.set({ mvrShowMarks: e.target.checked });
+  }, true);
+  document.getElementById('mvr-free-text').addEventListener('change', (e) => {
+    freeTextEnabled = e.target.checked;
+    chrome.storage.local.set({ mvrFreeText: freeTextEnabled });
+  }, true);
 
   // Voice picker — warm up new voice on server when changed
   const voiceSelect = document.getElementById('mvr-voice');
@@ -243,8 +375,13 @@ function createUI() {
   loadVoices();
 
   // Restore persisted settings
-  chrome.storage.local.get(['mvrVoice', 'mvrSpeed', 'mvrOverlay', 'mvrAutoRead'], (data) => {
+  chrome.storage.local.get(['mvrVoice', 'mvrSpeed', 'mvrOverlay', 'mvrAutoRead', 'mvrShowMarks', 'mvrFreeText'], (data) => {
     if (data.mvrVoice) {
+      // Reset old Kokoro voices to Piper
+      if (data.mvrVoice !== '_piper' && data.mvrVoice !== '_browser') {
+        data.mvrVoice = '_piper';
+        chrome.storage.local.set({ mvrVoice: '_piper' });
+      }
       selectedVoice = data.mvrVoice;
       const vs = document.getElementById('mvr-voice');
       if (vs) vs.value = selectedVoice;
@@ -265,55 +402,32 @@ function createUI() {
       const ac = document.getElementById('mvr-auto');
       if (ac) ac.checked = autoReadEnabled;
     }
+    const sm = document.getElementById('mvr-show-marks');
+    if (sm) sm.checked = data.mvrShowMarks !== false; // default ON
+    if (data.mvrFreeText !== undefined) {
+      freeTextEnabled = data.mvrFreeText;
+      const ft = document.getElementById('mvr-free-text');
+      if (ft) ft.checked = freeTextEnabled;
+    }
   });
+  updateUrlBar();
 }
 
 async function loadVoices() {
   const select = document.getElementById('mvr-voice');
   if (!select) return;
-  try {
-    const data = await chrome.runtime.sendMessage({ type: 'MVR_TTS_STATUS' });
-    if (!data || !data.ok) return;
-    if (!data.voices || data.voices.length === 0) return;
-    availableVoices = data.voices;
-    select.innerHTML = '';
-    // Group voices by language prefix
-    const groups = {};
-    for (const v of data.voices) {
-      const prefix = v.substring(0, 2);
-      if (!groups[prefix]) groups[prefix] = [];
-      groups[prefix].push(v);
-    }
-    const voiceNames = {
-      af_alloy: 'Alloy', af_aoede: 'Aoede', af_bella: 'Bella', af_heart: 'Heart', af_jessica: 'Jessica',
-      af_kore: 'Kore', af_nicole: 'Nicole', af_nova: 'Nova', af_river: 'River', af_sarah: 'Sarah', af_sky: 'Sky',
-      am_adam: 'Adam', am_echo: 'Echo', am_eric: 'Eric', am_fenrir: 'Fenrir', am_liam: 'Liam',
-      am_michael: 'Michael', am_onyx: 'Onyx', am_puck: 'Puck', am_santa: 'Santa',
-      bf_alice: 'Alice', bf_emma: 'Emma', bf_isabella: 'Isabella', bf_lily: 'Lily',
-      bm_daniel: 'Daniel', bm_fable: 'Fable', bm_george: 'George', bm_lewis: 'Lewis',
-      ef_dora: 'Dora', em_alex: 'Alex', em_santa: 'Santa',
-      ff_siwis: 'Siwis',
-      hf_alpha: 'Alpha', hf_beta: 'Beta', hm_omega: 'Omega', hm_psi: 'Psi',
-      if_sara: 'Sara', im_nicola: 'Nicola',
-      jf_alpha: 'Alpha', jf_gongitsune: 'Gongitsune', jf_nezumi: 'Nezumi', jf_tebukuro: 'Tebukuro', jm_kumo: 'Kumo',
-      pf_dora: 'Dora', pm_alex: 'Alex', pm_santa: 'Santa',
-      zf_xiaobei: 'Xiaobei', zf_xiaoni: 'Xiaoni', zf_xiaoxiao: 'Xiaoxiao', zf_xiaoyi: 'Xiaoyi',
-      zm_yunjian: 'Yunjian', zm_yunxi: 'Yunxi', zm_yunxia: 'Yunxia', zm_yunyang: 'Yunyang',
-    };
-    const groupNames = { af: 'English Female', am: 'English Male', bf: 'British Female', bm: 'British Male', ef: 'Spanish Female', em: 'Spanish Male', ff: 'French', hf: 'Hindi Female', hm: 'Hindi Male', 'if': 'Italian Female', im: 'Italian Male', jf: 'Japanese Female', jm: 'Japanese Male', pf: 'Portuguese Female', pm: 'Portuguese Male', zf: 'Chinese Female', zm: 'Chinese Male' };
-    for (const [prefix, voices] of Object.entries(groups)) {
-      const group = document.createElement('optgroup');
-      group.label = groupNames[prefix] || prefix;
-      for (const v of voices) {
-        const opt = document.createElement('option');
-        opt.value = v;
-        opt.textContent = voiceNames[v] || v.split('_').pop();
-        if (v === selectedVoice) opt.selected = true;
-        group.appendChild(opt);
-      }
-      select.appendChild(group);
-    }
-  } catch (_) {}
+  // Simple: just Piper and System Voice
+  select.innerHTML = '';
+  const piperOpt = document.createElement('option');
+  piperOpt.value = '_piper';
+  piperOpt.textContent = 'Piper';
+  if (selectedVoice !== '_browser') piperOpt.selected = true;
+  select.appendChild(piperOpt);
+  const browserOpt = document.createElement('option');
+  browserOpt.value = '_browser';
+  browserOpt.textContent = 'System Voice';
+  if (selectedVoice === '_browser') browserOpt.selected = true;
+  select.appendChild(browserOpt);
 }
 
 // ─── Keyboard shortcuts ───────────────────────────────────────────────────────
@@ -350,9 +464,14 @@ document.addEventListener('keydown', (e) => {
   }
 }, true);
 
+function updateUrlBar() {
+  const el = document.getElementById('mvr-url-bar');
+  if (el) el.textContent = location.pathname;
+}
 function setStatus(msg) {
   const el = document.getElementById('mvr-status');
   if (el) el.textContent = msg;
+  updateUrlBar();
 }
 function showText(msg) {
   const el = document.getElementById('mvr-text');
@@ -366,7 +485,7 @@ function setButtons(reading) {
   if (!reading) {
     paused = false;
     const pauseBtn = document.getElementById('mvr-pause');
-    if (pauseBtn) { pauseBtn.textContent = '\u275A\u275A'; pauseBtn.classList.remove('active'); }
+    if (pauseBtn) { pauseBtn.classList.remove('active'); pauseBtn.removeAttribute('aria-pressed'); }
   }
 }
 function setProgress(current, total) {
@@ -556,86 +675,185 @@ function _countdownNavigate(url) {
   });
 }
 
-function autoGoNext() {
-  mvrLog(`autoGoNext called: autoReadEnabled=${autoReadEnabled}, speaking=${speaking}`);
-  if (!autoReadEnabled || speaking) return;
-
-  // Get current and total page from mangafire.to's UI
-  // Use the specific span inside the button (most reliable)
-  const currentSpan = document.querySelector('span.current-page');
-  const totalSpan = document.querySelector('b.total-page');
-  const currentNum = currentSpan ? parseInt(currentSpan.textContent.trim()) : 0;
-  const totalNum = totalSpan ? parseInt(totalSpan.textContent.trim()) : 0;
-
-  const dir = document.getElementById('mvr-direction')?.value || 'rtl';
-  const isRTL = dir === 'rtl';
-  mvrLog(`autoGoNext: page ${currentNum}/${totalNum}, lastReadPageNum=${lastReadPageNum}, dir=${dir}`);
-
-  // LAST PAGE CHECK
-  // RTL: page 1 is last (pages count down). LTR: page N is last (pages count up).
-  const isLastPage = isRTL
-    ? (currentNum > 0 && currentNum <= 1)
-    : (currentNum > 0 && totalNum > 0 && currentNum >= totalNum);
-  if (isLastPage) {
-    const nextChapterUrl = findNextChapterUrl();
-    mvrLog(`Last page detected (page=${currentNum}, dir=${dir})! next_chapter_url: ${nextChapterUrl}`);
-    if (nextChapterUrl) {
-      _countdownNavigate(nextChapterUrl);
-    } else {
-      setStatus('Done — last page of last chapter.');
-    }
+function _goNextPage(isRTL) {
+  // Click the page-go-right button (mangafire.to — always advances one page)
+  const btn = document.querySelector('#page-go-right');
+  if (btn) {
+    btn.click();
+    mvrLog('Next page: clicked #page-go-right');
     return;
   }
-
-  // WRAP-AROUND CHECK
-  // RTL: wrap = page went UP (e.g. 2→14). LTR: wrap = page went DOWN (e.g. 13→1).
-  const wrapped = isRTL
-    ? (lastReadPageNum > 0 && currentNum > 0 && currentNum > lastReadPageNum)
-    : (lastReadPageNum > 0 && currentNum > 0 && currentNum < lastReadPageNum);
-  if (wrapped) {
-    const nextChapterUrl = findNextChapterUrl();
-    mvrLog(`Wrap detected: was page ${lastReadPageNum}, now ${currentNum}. next_chapter_url: ${nextChapterUrl}`);
-    if (nextChapterUrl) {
-      _countdownNavigate(nextChapterUrl);
-    } else {
-      setStatus('Done — no next chapter found.');
+  // Fallback for other sites
+  const fallbacks = ['a.next', '.next-page', '.btn-next', '[rel="next"]'];
+  for (const sel of fallbacks) {
+    const el = document.querySelector(sel);
+    if (el) {
+      el.click();
+      mvrLog('Next page: clicked ' + sel);
+      return;
     }
-    return;
   }
+  mvrLog('Next page: no button found');
+}
 
-  lastReadPageNum = currentNum;
+function _waitForImageLoad(callback) {
+  // Poll until the largest visible image is fully loaded (complete + nonzero size).
+  // This prevents reading a stale or half-loaded page after navigation.
+  const IMG_WAIT_MAX = 4000;
+  const IMG_POLL_MS = 200;
+  const imgStart = Date.now();
 
-  mvrLog(`Sending MVR_CLICK_PAGE to advance from page ${currentNum} (dir=${dir})`);
-  chrome.runtime.sendMessage({ type: 'MVR_CLICK_PAGE', direction: dir });
-
-  // After click, wait for page transition to fully complete before reading
-  setTimeout(() => {
-    if (!autoReadEnabled || speaking) return;
-
-    // Re-check page number after the click
-    const newSpan = document.querySelector('span.current-page');
-    const newNum = newSpan ? parseInt(newSpan.textContent.trim()) : 0;
-    mvrLog(`Post-click: page is now ${newNum} (was ${currentNum})`);
-
-    // If page didn't change or wrapped around — go to next chapter
-    // RTL: forward = page number decreases, wrap = page went up
-    // LTR: forward = page number increases, wrap = page went down
-    const postClickWrap = isRTL
-      ? (newNum > 0 && newNum >= currentNum && currentNum <= 2)
-      : (newNum > 0 && currentNum > 0 && newNum <= currentNum && currentNum >= totalNum - 1);
-    if (postClickWrap) {
-      const nextChapterUrl = findNextChapterUrl();
-      mvrLog(`Post-click wrap detected (${currentNum}->${newNum}). next_chapter_url: ${nextChapterUrl}`);
-      if (nextChapterUrl) {
-        _countdownNavigate(nextChapterUrl);
-        return;
+  function checkImage() {
+    const imgs = document.querySelectorAll('img');
+    let best = null;
+    let bestArea = 0;
+    for (const img of imgs) {
+      const r = img.getBoundingClientRect();
+      const area = r.width * r.height;
+      if (area > bestArea && r.width > 100 && r.height > 100) {
+        bestArea = area;
+        best = img;
       }
     }
 
-    if (autoReadEnabled && !speaking) {
-      readPage();
+    const elapsed = Date.now() - imgStart;
+    if (best && best.complete && best.naturalWidth > 0 && best.naturalHeight > 0) {
+      // Image loaded. Give a small extra buffer for rendering.
+      mvrLog(`Image ready after ${elapsed}ms (${best.naturalWidth}x${best.naturalHeight})`);
+      setTimeout(callback, 200);
+      return;
     }
-  }, 1500);
+
+    if (elapsed >= IMG_WAIT_MAX) {
+      mvrLog(`Image wait timeout (${elapsed}ms), proceeding anyway`);
+      callback();
+      return;
+    }
+
+    setTimeout(checkImage, IMG_POLL_MS);
+  }
+
+  // Small initial delay to let the DOM update
+  setTimeout(checkImage, 150);
+}
+
+let _autoNavPending = false;
+let _consecutiveEmpty = 0;
+const MAX_EMPTY_SKIPS = 2;
+
+// Build a "chapter fingerprint" using multiple signals so we detect chapter changes
+// even if some signals update before others during SPA navigation
+function _getChapterFingerprint() {
+  const url = location.href;
+  const title = document.title || '';
+  const totalSpan = document.querySelector('b.total-page');
+  const totalPages = totalSpan ? totalSpan.textContent.trim() : '?';
+
+  // Extract chapter from URL if available
+  const m = url.match(/chapter[_-]?(\d+(?:\.\d+)?)/i);
+  const chapterNum = m ? m[1] : '';
+
+  // Try to get chapter from page DOM (chapter selector, breadcrumbs, etc.)
+  let domChapter = '';
+  // mangafire: look for active chapter selector or visible chapter text
+  const selectors = [
+    'select.chapter-selector option[selected]',
+    'select[name="chapter"] option[selected]',
+    '.chapter-selector .active',
+    '.active-chapter',
+    '[data-chapter].active',
+    'a.active[href*="chapter"]',
+    '.chapters .active',
+  ];
+  for (const sel of selectors) {
+    const el = document.querySelector(sel);
+    if (el) {
+      const txt = el.textContent.trim();
+      const cm = txt.match(/(\d+(?:\.\d+)?)/);
+      if (cm) { domChapter = cm[1]; break; }
+    }
+  }
+
+  // Also check inline scripts for chapter data
+  let scriptChapter = '';
+  if (!chapterNum && !domChapter) {
+    const scripts = document.querySelectorAll('script:not([src])');
+    for (const s of scripts) {
+      const sm = s.textContent.match(/"current_chapter"\s*:\s*(\d+)/);
+      if (sm) { scriptChapter = sm[1]; break; }
+    }
+  }
+
+  return { url, title, totalPages, chapterNum, domChapter, scriptChapter };
+}
+
+function _chapterChanged(before, after) {
+  // URL chapter number changed
+  if (before.chapterNum && after.chapterNum && before.chapterNum !== after.chapterNum) return true;
+  // DOM chapter indicator changed
+  if (before.domChapter && after.domChapter && before.domChapter !== after.domChapter) return true;
+  // Script chapter changed
+  if (before.scriptChapter && after.scriptChapter && before.scriptChapter !== after.scriptChapter) return true;
+  // Full URL changed (covers non-chapter URL patterns)
+  if (before.url !== after.url) return true;
+  // Title changed (many sites put chapter in title)
+  if (before.title !== after.title) return true;
+  // Total pages changed (different chapters have different page counts)
+  if (before.totalPages !== '?' && after.totalPages !== '?' && before.totalPages !== after.totalPages) return true;
+  return false;
+}
+
+function autoGoNext() {
+  mvrLog(`autoGoNext called: autoReadEnabled=${autoReadEnabled}, speaking=${speaking}, pending=${_autoNavPending}`);
+  if (!autoReadEnabled || speaking) return;
+  if (_autoNavPending) return;
+
+  const dir = document.getElementById('mvr-direction')?.value || 'rtl';
+  const isRTL = dir === 'rtl';
+
+  // Get current page number before clicking
+  const currentSpan = document.querySelector('span.current-page');
+  const currentNum = currentSpan ? parseInt(currentSpan.textContent.trim()) : 0;
+  const urlBefore = location.href;
+
+  _autoNavPending = true;
+  mvrLog(`Advancing from page ${currentNum} (dir=${dir})`);
+  _goNextPage(isRTL);
+
+  // Poll until something changes (page number or URL)
+  const pollStart = Date.now();
+  const MAX_WAIT = 5000;
+  const POLL_MS = 150;
+  const pollForChange = () => {
+    if (!autoReadEnabled || speaking) { _autoNavPending = false; return; }
+
+    const newSpan = document.querySelector('span.current-page');
+    const newNum = newSpan ? parseInt(newSpan.textContent.trim()) : 0;
+    const urlNow = location.href;
+    const elapsed = Date.now() - pollStart;
+
+    // Something changed (page number or URL) or timeout
+    if (newNum !== currentNum || urlNow !== urlBefore || elapsed >= MAX_WAIT) {
+      _autoNavPending = false;
+
+      if (urlNow !== urlBefore) {
+        mvrLog(`URL changed: ${urlBefore} -> ${urlNow}. Continuing.`);
+        updateUrlBar();
+      }
+      mvrLog(`Post-click: page ${currentNum}->${newNum} (${elapsed}ms)`);
+
+      // Wait for image to load, then read
+      _waitForImageLoad(() => {
+        if (autoReadEnabled && !speaking) {
+          readPage();
+        }
+      });
+      return;
+    }
+
+    setTimeout(pollForChange, POLL_MS);
+  };
+  setTimeout(pollForChange, POLL_MS);
 }
 
 // ─── Highlighting ─────────────────────────────────────────────────────────────
@@ -657,6 +875,7 @@ function drawBubbles(bubbles) {
   removeHighlights();
   if (!bubbles || bubbles.length === 0) return;
   if (overlayMode === 'hidden') return;
+  if (!document.getElementById('mvr-show-marks')?.checked) return;
 
   const overlay = document.createElement('div');
   overlay.id = 'mvr-overlay';
@@ -686,7 +905,6 @@ function drawBubbles(bubbles) {
   });
 
   document.body.appendChild(overlay);
-  lastScrollY = window.scrollY;
 }
 
 function refreshOverlayStyle() {
@@ -736,6 +954,72 @@ function setActiveBubble(activeIdx) {
   });
 }
 
+// ─── Background Quality Pass (Florence-2) ────────────────────────────────────
+
+let _activeQualityPollId = null;
+
+function _pollQualityPass(requestId, bubbles) {
+  _activeQualityPollId = requestId; // cancel any previous poll
+  let attempts = 0;
+  const maxAttempts = 30; // 30 * 2s = 60s max wait
+  const pollInterval = 2000;
+
+  const poll = async () => {
+    if (_activeQualityPollId !== requestId) {
+      mvrLog('Quality pass: cancelled (new page)');
+      return;
+    }
+    if (attempts >= maxAttempts) {
+      mvrLog('Quality pass: timed out');
+      return;
+    }
+    attempts++;
+    try {
+      const res = await new Promise((resolve) => {
+        chrome.runtime.sendMessage(
+          { type: 'MVR_QUALITY_POLL', requestId },
+          (r) => resolve(r || { ready: false })
+        );
+      });
+
+      if (!res.ready) {
+        setTimeout(poll, pollInterval);
+        return;
+      }
+
+      // Quality results arrived — update unread bubbles
+      const qBubbles = res.bubbles || [];
+      if (qBubbles.length === 0) return;
+
+      let updated = 0;
+      for (let qi = 0; qi < qBubbles.length && qi < bubbles.length; qi++) {
+        // Only update bubbles we haven't read yet
+        if (qi > currentBubbleIndex && qBubbles[qi].text !== bubbles[qi].text) {
+          const oldText = bubbles[qi].text;
+          bubbles[qi].text = qBubbles[qi].text;
+          updated++;
+          mvrLog(`Quality upgrade [${qi}]: "${oldText.substring(0,30)}" → "${qBubbles[qi].text.substring(0,30)}"`);
+        }
+      }
+
+      if (updated > 0) {
+        mvrLog(`Quality pass: ${updated} bubbles upgraded (${res.timing_ms}ms)`);
+        // Refresh displayed text
+        const allText = bubbles.map((b, i) => `[${i + 1}] ${b.text}`).join('\n');
+        showText(allText);
+      } else {
+        mvrLog(`Quality pass: no improvements (${res.timing_ms}ms)`);
+      }
+    } catch (e) {
+      mvrLog('Quality poll error: ' + e.message);
+    }
+  };
+
+  // Start polling after a short delay (give Florence-2 time to process)
+  setTimeout(poll, 3000);
+}
+
+
 // ─── Main Flow ────────────────────────────────────────────────────────────────
 
 async function readPage() {
@@ -763,124 +1047,243 @@ async function readPage() {
 
     setStatus('Reading...');
 
-    const result = await new Promise((resolve, reject) => {
-      chrome.runtime.sendMessage(
-        { type: 'READ_SCREEN', cropRect, dpr: window.devicePixelRatio || 2, pageTitle: document.title, pageUrl: location.href, readingDirection: document.getElementById('mvr-direction')?.value || 'rtl' },
-        (res) => {
-          if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
-          resolve(res);
-        }
-      );
-    });
+    const result = await Promise.race([
+      new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage(
+          { type: 'READ_SCREEN', cropRect, dpr: window.devicePixelRatio || 2, pageTitle: document.title, pageUrl: location.href, readingDirection: document.getElementById('mvr-direction')?.value || 'rtl', voice: document.getElementById('mvr-voice')?.value || '_piper', speed: parseFloat(document.getElementById('mvr-speed')?.value || '0.9'), freeText: freeTextEnabled },
+          (res) => {
+            if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
+            resolve(res);
+          }
+        );
+      }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout: server took too long')), 60000))
+    ]);
 
     if (panel) panel.style.display = '';
     if (!speaking) return;
 
     if (!result?.ok) {
       const err = result?.error || 'Unknown error';
-      setStatus(err === 'SERVER_NOT_RUNNING' ? 'Server not running. Start: python server/server.py' : 'Error: ' + err);
+      if (err === 'SERVER_NOT_RUNNING') {
+        setStatus('Server off. Run: python3 ~/MangaVoice/server/server_lite.py');
+      } else if (err.includes('503')) {
+        setStatus('Models still loading... try again in a few seconds.');
+      } else {
+        setStatus('Error: ' + err);
+      }
       setButtons(false); speaking = false;
       return;
     }
 
     const bubbles = result.bubbles || [];
+    const freeTexts = result.freeTexts || [];
+    const qualityRequestId = result.requestId || null;
+
+    // Tag original bubbles with their audio index before merging
+    bubbles.forEach((b, i) => { b._audioIdx = i; });
+
+    // Append free text results to bubbles (they come pre-sorted from server)
+    if (freeTexts.length > 0) {
+      mvrLog(`Free text: ${freeTexts.length} regions found outside bubbles`);
+      for (const ft of freeTexts) {
+        bubbles.push(ft);
+      }
+      // Re-sort everything together by reading order (top-to-bottom, then by direction)
+      const dir = document.getElementById('mvr-direction')?.value || 'rtl';
+      const rowH = 150; // approximate row height in CSS pixels
+      if (dir === 'rtl') {
+        bubbles.sort((a, b) => {
+          const rowA = Math.floor(a.top / rowH), rowB = Math.floor(b.top / rowH);
+          if (rowA !== rowB) return rowA - rowB;
+          return b.left - a.left;
+        });
+      } else {
+        bubbles.sort((a, b) => {
+          const rowA = Math.floor(a.top / rowH), rowB = Math.floor(b.top / rowH);
+          if (rowA !== rowB) return rowA - rowB;
+          return a.left - b.left;
+        });
+      }
+    }
+
+    // Start background quality polling if server has a quality pass running
+    if (qualityRequestId) {
+      _pollQualityPass(qualityRequestId, bubbles);
+    }
 
     if (bubbles.length === 0) {
-      // No dialogue — auto-skip to next page immediately if auto-read is on
-      mvrLog(`readPage: 0 bubbles found, autoReadEnabled=${autoReadEnabled}`);
-      if (autoReadEnabled) {
-        setStatus('No dialogue — skipping...');
+      _consecutiveEmpty++;
+      mvrLog(`readPage: 0 bubbles found (${_consecutiveEmpty} consecutive empty)`);
+      if (autoReadEnabled && _consecutiveEmpty <= MAX_EMPTY_SKIPS) {
+        setStatus(`No dialogue, skipping... (${_consecutiveEmpty}/${MAX_EMPTY_SKIPS})`);
+        // Still "speaking" so autoGoNext fires at the end
+      } else {
+        setStatus('No dialogue found.');
         setButtons(false); speaking = false;
-        autoGoNext();
+        _consecutiveEmpty = 0;
         return;
       }
-      setStatus('No dialogue found.');
-      setButtons(false); speaking = false;
-      return;
+    } else {
+      // Found bubbles, reset empty counter
+      _consecutiveEmpty = 0;
     }
 
     if (result.timing) {
       console.log('[MVR] Timing:', result.timing);
     }
 
-    setStatus('Found ' + bubbles.length + ' bubble' + (bubbles.length !== 1 ? 's' : ''));
+    const ftCount = freeTexts.length;
+    const bCount = bubbles.length - ftCount;
+    const statusMsg = ftCount > 0
+      ? `Found ${bCount} bubble${bCount !== 1 ? 's' : ''} + ${ftCount} free text`
+      : `Found ${bubbles.length} bubble${bubbles.length !== 1 ? 's' : ''}`;
+    setStatus(statusMsg);
     drawBubbles(bubbles);
 
     const allText = bubbles.map((b, i) => `[${i + 1}] ${b.text}`).join('\n');
     showText(allText);
 
-    // Pre-fetch ALL bubble audio in parallel for zero-gap playback
+    // TTS mode: "kokoro" (server AI voice) or "browser" (instant system voice)
+    const voiceVal = document.getElementById('mvr-voice')?.value || '_piper';
+    const useKokoro = voiceVal !== '_browser';
     totalBubbles = bubbles.length;
-    const audioCache = new Array(bubbles.length).fill(null);
-    const audioPromises = bubbles.map((b, idx) => {
-      const p = fetchTTSAudio(b.text).then(url => { audioCache[idx] = url; return url; });
-      return p;
-    });
+    const audioId = result.audioId;
 
-    skipDirection = 0;
-    for (let i = 0; i < bubbles.length; i++) {
-      if (!speaking) break;
-      currentBubbleIndex = i;
-      setActiveBubble(i);
-      setProgress(i + 1, bubbles.length);
-      setStatus(`Reading ${i + 1}/${bubbles.length}`);
+    if (useKokoro && audioId) {
+      // ─── STREAMING PAGE AUDIO ────────────────────────────────────
+      // Server generates bubble audio in background. We buffer ahead
+      // so there's no gap between bubbles during playback.
 
-      // Wait for this bubble's audio (likely already cached from batch pre-fetch)
-      let audioData = audioCache[i] || await audioPromises[i];
+      skipDirection = 0;
 
-      // Re-fetch if voice was changed while pre-fetching
-      if (_prefetchInvalid) {
-        _prefetchInvalid = false;
-        audioData = await fetchTTSAudio(bubbles[i].text);
+      // Wait for first 2 bubbles (or all if fewer) to buffer before playing
+      const bufferTarget = Math.min(2, bubbles.length);
+      setStatus(`Buffering voice...`);
+      for (let wait = 0; wait < 80 && speaking; wait++) {
+        try {
+          const resp = await fetch(`${LOCAL_SERVER}/process/audio?id=${audioId}&bubble=${bufferTarget - 1}`);
+          if (resp.status === 200) break;
+        } catch (e) { /* retry */ }
+        await new Promise(r => setTimeout(r, 150));
       }
 
-      // Check if skip happened during fetch
-      if (skipDirection !== 0) {
-        const newIdx = i + skipDirection;
-        skipDirection = 0;
-        if (newIdx >= 0 && newIdx < bubbles.length) {
-          i = newIdx - 1;
+      // Pre-fetch helper: fetch bubble audio, return blob URL or null
+      async function fetchBubbleAudio(idx) {
+        const bubble = bubbles[idx];
+        if (!bubble) return null;
+
+        // Free text items don't have pre-cached audio, use /tts directly
+        if (bubble.freeText) {
+          try {
+            const resp = await fetch(`${LOCAL_SERVER}/tts`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ text: bubble.text, voice: voiceVal, speed: parseFloat(document.getElementById('mvr-speed')?.value || '0.9') }),
+            });
+            if (resp.ok) {
+              const blob = await resp.blob();
+              return URL.createObjectURL(blob);
+            }
+          } catch (e) { /* fallback to null */ }
+          return null;
         }
-        continue;
+
+        // Regular bubble: use pre-cached audio by original index
+        const audioIdx = bubble._audioIdx !== undefined ? bubble._audioIdx : idx;
+        for (let attempt = 0; attempt < 60; attempt++) {
+          if (!speaking) return null;
+          try {
+            const resp = await fetch(`${LOCAL_SERVER}/process/audio?id=${audioId}&bubble=${audioIdx}`);
+            if (resp.status === 200) {
+              const contentType = resp.headers.get('content-type') || '';
+              if (contentType.includes('audio')) {
+                const blob = await resp.blob();
+                return URL.createObjectURL(blob);
+              } else {
+                const data = await resp.json();
+                if (data.empty) return null;
+              }
+            } else if (resp.status === 202) {
+              const progress = await resp.json();
+              if (idx === 0) setStatus(`Generating voice... (${progress.generated}/${progress.total})`);
+            }
+          } catch (e) { /* retry */ }
+          await new Promise(r => setTimeout(r, 100));
+        }
+        return null;
       }
 
-      if (!speaking) break;
+      // Pre-fetch first bubble
+      let nextAudioPromise = fetchBubbleAudio(0);
 
-      // Pre-buffer NEXT bubble's audio while this one plays (zero-gap transition)
-      if (i + 1 < bubbles.length) {
-        const nextAudio = audioCache[i + 1] || await audioPromises[i + 1];
-        if (nextAudio) preloadNextAudio(nextAudio);
+      for (let i = 0; i < bubbles.length; i++) {
+        if (!speaking) break;
+        currentBubbleIndex = i;
+        setActiveBubble(i);
+        setProgress(i + 1, bubbles.length);
+        setStatus(`Reading ${i + 1}/${bubbles.length}`);
+
+        // Await this bubble's audio (already being fetched)
+        let audioBlobUrl = await nextAudioPromise;
+
+        // Start pre-fetching NEXT bubble immediately (overlaps with playback)
+        nextAudioPromise = (i + 1 < bubbles.length) ? fetchBubbleAudio(i + 1) : Promise.resolve(null);
+
+        if (!speaking) break;
+
+        // Handle skip
+        if (skipDirection !== 0) {
+          const newIdx = i + skipDirection;
+          skipDirection = 0;
+          if (audioBlobUrl) URL.revokeObjectURL(audioBlobUrl);
+          // Reset pre-fetch for the new target
+          nextAudioPromise = (newIdx >= 0 && newIdx < bubbles.length) ? fetchBubbleAudio(newIdx) : Promise.resolve(null);
+          if (newIdx >= 0 && newIdx < bubbles.length) { i = newIdx - 1; }
+          continue;
+        }
+
+        if (audioBlobUrl) {
+          mvrLog(`Bubble ${i}: audio ready, playing`);
+          await playAudioData(audioBlobUrl);
+        }
+
+        // Handle skip after playback
+        if (skipDirection !== 0) {
+          const newIdx = i + skipDirection;
+          skipDirection = 0;
+          if (newIdx >= 0 && newIdx < bubbles.length) { i = newIdx - 1; }
+          continue;
+        }
+
+        // Respect pause
+        while (paused && speaking && skipDirection === 0) await new Promise(r => setTimeout(r, 100));
+        if (skipDirection !== 0) {
+          const newIdx = i + skipDirection;
+          skipDirection = 0;
+          if (newIdx >= 0 && newIdx < bubbles.length) { i = newIdx - 1; }
+          continue;
+        }
       }
 
-      // Play the audio
-      if (audioData) {
-        await playAudioData(audioData);
-      } else {
+    } else {
+      // ─── BROWSER TTS FALLBACK ────────────────────────────────────
+      skipDirection = 0;
+      for (let i = 0; i < bubbles.length; i++) {
+        if (!speaking) break;
+        currentBubbleIndex = i;
+        setActiveBubble(i);
+        setProgress(i + 1, bubbles.length);
+        setStatus(`Reading ${i + 1}/${bubbles.length}`);
         await speak(bubbles[i].text);
-      }
 
-      // Handle skip after playback interrupted
-      if (skipDirection !== 0) {
-        const newIdx = i + skipDirection;
-        skipDirection = 0;
-        if (newIdx >= 0 && newIdx < bubbles.length) {
-          i = newIdx - 1;
+        if (skipDirection !== 0) {
+          const newIdx = i + skipDirection;
+          skipDirection = 0;
+          if (newIdx >= 0 && newIdx < bubbles.length) { i = newIdx - 1; }
+          continue;
         }
-        continue;
-      }
-
-      // Wait while paused, then brief natural pause between bubbles
-      while (paused && speaking && skipDirection === 0) await new Promise(r => setTimeout(r, 100));
-      if (skipDirection !== 0) {
-        const newIdx = i + skipDirection;
-        skipDirection = 0;
-        if (newIdx >= 0 && newIdx < bubbles.length) {
-          i = newIdx - 1;
-        }
-        continue;
-      }
-      if (speaking && i < bubbles.length - 1) {
-        await new Promise(r => setTimeout(r, 30));
+        while (paused && speaking && skipDirection === 0) await new Promise(r => setTimeout(r, 100));
       }
     }
 
@@ -900,6 +1303,10 @@ async function readPage() {
     console.error('[MVR]', err);
     const panel = document.getElementById('mvr');
     if (panel) panel.style.display = '';
+  } finally {
+    // ALWAYS restore panel visibility no matter what
+    const p = document.getElementById('mvr');
+    if (p) p.style.display = '';
   }
 
   const shouldAutoNext = speaking && autoReadEnabled;
@@ -908,7 +1315,8 @@ async function readPage() {
   speaking = false;
 
   if (shouldAutoNext) {
-    autoGoNext();
+    // Small delay before auto-advancing to prevent rapid-fire on empty pages
+    setTimeout(() => autoGoNext(), 500);
   }
 }
 
@@ -935,6 +1343,12 @@ async function speak(text) {
     const u = new SpeechSynthesisUtterance(text);
     u.lang = 'en-US';
     u.volume = 1;
+    // Pick best voice: Google US English > Google UK English > any English Google voice
+    if (_browserVoices.length === 0) _browserVoices = window.speechSynthesis.getVoices();
+    const gv = _browserVoices.find(v => v.name === 'Google US English')
+            || _browserVoices.find(v => v.name.includes('Google') && v.lang.startsWith('en'))
+            || _browserVoices.find(v => v.lang === 'en-US' && !v.localService);
+    if (gv) u.voice = gv;
 
     switch (emotion) {
       case 'shout':
@@ -958,67 +1372,15 @@ async function speak(text) {
   });
 }
 
-// ─── AI TTS (local Piper via server) ─────────────────────────────────────────
-
-async function fetchTTSAudio(text, _retryCount = 0) {
-  /**Fetch audio from server via background.js proxy. Returns blob URL or null.
-   * Retries once on failure before giving up (no SpeechSynthesis fallback).*/
-  try {
-    const speed = parseFloat(document.getElementById('mvr-speed')?.value || '0.85');
-    const res = await chrome.runtime.sendMessage({
-      type: 'MVR_TTS', text, voice: selectedVoice, speed,
-    });
-    if (!res || !res.ok || !res.audio) {
-      if (_retryCount === 0) {
-        await new Promise(r => setTimeout(r, 500));
-        return fetchTTSAudio(text, 1);
-      }
-      return null;
-    }
-    // Decode base64 audio back to blob
-    const binary = atob(res.audio);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    const blob = new Blob([bytes], { type: res.type || 'audio/wav' });
-    return URL.createObjectURL(blob);
-  } catch (err) {
-    if (_retryCount === 0) {
-      await new Promise(r => setTimeout(r, 500));
-      return fetchTTSAudio(text, 1);
-    }
-    return null;
-  }
-}
-
-let _preloadedAudio = null; // Pre-buffered Audio element for next bubble
-
-function preloadNextAudio(blobUrl) {
-  /**Pre-buffer the next bubble's audio so it plays instantly when needed.*/
-  if (!blobUrl) return;
-  try {
-    const audio = new Audio(blobUrl);
-    audio.preload = 'auto';
-    audio.load(); // Start buffering immediately
-    _preloadedAudio = { url: blobUrl, audio };
-  } catch(e) { _preloadedAudio = null; }
-}
-
 function playAudioData(blobUrl) {
-  /**Play pre-fetched audio blob URL. Respects pause state. Returns promise that resolves when done.*/
+  /**Play audio blob URL. Respects pause state. Returns promise that resolves when done.*/
   return new Promise(async (resolve) => {
     if (!speaking) { resolve(); return; }
     while (paused && speaking && skipDirection === 0) await new Promise(r => setTimeout(r, 100));
     if (!speaking || skipDirection !== 0) { resolve(); return; }
     _audioResolve = resolve;
     try {
-      let audio;
-      // Use pre-buffered audio if it matches this URL
-      if (_preloadedAudio && _preloadedAudio.url === blobUrl) {
-        audio = _preloadedAudio.audio;
-        _preloadedAudio = null;
-      } else {
-        audio = new Audio(blobUrl);
-      }
+      const audio = new Audio(blobUrl);
       currentAudio = audio;
       const done = () => { currentAudio = null; _audioResolve = null; URL.revokeObjectURL(blobUrl); resolve(); };
       audio.onended = done;
@@ -1038,11 +1400,11 @@ function togglePause() {
   paused = !paused;
   const pauseBtn = document.getElementById('mvr-pause');
   if (paused) {
-    if (pauseBtn) { pauseBtn.textContent = '\u25B6'; pauseBtn.classList.add('active'); }
+    if (pauseBtn) { pauseBtn.classList.add('active'); pauseBtn.setAttribute('aria-pressed', 'false'); }
     if (currentAudio) currentAudio.pause();
     setStatus('Paused');
   } else {
-    if (pauseBtn) { pauseBtn.textContent = '\u275A\u275A'; pauseBtn.classList.remove('active'); }
+    if (pauseBtn) { pauseBtn.classList.remove('active'); pauseBtn.setAttribute('aria-pressed', 'true'); }
     if (currentAudio) currentAudio.play();
     setStatus('Reading...');
   }

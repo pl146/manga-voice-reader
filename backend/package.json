@@ -1,9 +1,0 @@
-{
-  "name": "manga-voice-reader-backend",
-  "version": "1.0.0",
-  "description": "OCR backend for Manga Voice Reader Chrome extension",
-  "main": "api/ocr.js",
-  "engines": {
-    "node": ">=18"
-  }
-}

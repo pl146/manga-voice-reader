@@ -1,235 +1,355 @@
+/* ─── MangaVoice: Tiny corner pill ─────────────────────────────── */
+
 #mvr {
   position: fixed;
   bottom: 12px;
   right: 12px;
-  width: 200px;
-  max-width: calc(100vw - 24px);
-  background: rgba(12, 12, 22, 0.93);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(233, 69, 96, 0.2);
-  border-radius: 12px;
+  width: auto;
+  min-width: 0;
+  background: rgba(5, 7, 10, 0.92);
+  border-radius: 22px;
+  border: 1px solid rgba(125, 211, 252, 0.2);
+  backdrop-filter: blur(18px);
+  box-shadow: 0 4px 16px rgba(3, 6, 12, 0.5);
+  color: #e2e8f0;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 10px;
   z-index: 2147483647;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  font-size: 11px;
-  color: #e0e0e8;
-  box-shadow: 0 6px 30px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.04);
-  cursor: default;
-  user-select: none;
   overflow: hidden;
 }
 
-/* Header */
-#mvr-head {
-  background: linear-gradient(135deg, #e94560 0%, #c22d4e 100%);
-  padding: 6px 10px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  cursor: move;
+#mvr-stars {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  pointer-events: none;
+  z-index: 0;
+  border-radius: 22px;
 }
-#mvr-head-title {
+
+#mvr-top, #mvr-body {
+  position: relative;
+  z-index: 1;
+}
+
+#mvr::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 22px;
+  padding: 1px;
+  background: linear-gradient(135deg, rgba(125, 211, 252, 0.4), rgba(129, 140, 248, 0.4));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask-composite: exclude;
+  pointer-events: none;
+}
+
+/* ─── Top: inline row ─── */
+
+#mvr-top {
+  padding: 5px 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: default;
+}
+
+#mvr-title {
   display: flex;
   align-items: center;
   gap: 5px;
-  font-weight: 700;
-  font-size: 11px;
-  color: #fff;
-  letter-spacing: 0.2px;
 }
-#mvr-head-title svg { flex-shrink: 0; opacity: 0.9; }
-#mvr-x {
-  background: rgba(255,255,255,0.15);
-  border: none;
-  color: #fff;
-  cursor: pointer;
+
+.mvr-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(125, 211, 252, 0.8);
+  background: #7dd3fc;
+  flex-shrink: 0;
+}
+
+.mvr-title-main {
+  display: none;
+}
+
+.mvr-status-label {
   font-size: 9px;
-  width: 18px;
-  height: 18px;
-  border-radius: 5px;
+  letter-spacing: 0.2px;
+  color: rgba(226, 232, 240, 0.7);
+  white-space: nowrap;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#mvr-top-actions {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+#mvr-controls-toggle,
+#mvr-x {
+  width: 20px;
+  height: 20px;
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: transparent;
+  color: #e2e8f0;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.15s;
-  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s ease;
 }
-#mvr-x:hover { background: rgba(255,255,255,0.3); }
 
-/* Body */
+#mvr-controls-toggle svg,
+#mvr-x svg {
+  width: 10px;
+  height: 10px;
+}
+
+#mvr-controls-toggle.open {
+  transform: rotate(25deg);
+  border-color: rgba(125, 211, 252, 0.5);
+  background: rgba(125, 211, 252, 0.1);
+}
+
+#mvr-controls-toggle:hover,
+#mvr-x:hover {
+  background: rgba(125, 211, 252, 0.12);
+}
+
+.mvr-sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0,0,0,0);
+  border: 0;
+}
+
+/* ─── Body: hidden by default, shown when reading or settings open ─── */
+
 #mvr-body {
-  padding: 7px 9px 9px;
+  padding: 0 8px 6px;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 3px;
 }
 
-/* Status */
-#mvr-status {
-  font-size: 10px;
-  color: rgba(255,255,255,0.35);
-  text-align: center;
-  min-height: 12px;
-}
-
-/* Progress bar */
 #mvr-progress-wrap {
   height: 2px;
-  background: rgba(255,255,255,0.06);
-  border-radius: 2px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
   overflow: hidden;
+  margin: 0 4px;
 }
+
 #mvr-progress-bar {
   height: 100%;
   width: 0%;
-  background: linear-gradient(90deg, #e94560, #ff6b81);
-  border-radius: 2px;
-  transition: width 0.3s ease;
+  background: linear-gradient(90deg, #7dd3fc, #818cf8);
+  border-radius: 999px;
+  transition: width 0.25s ease;
 }
 
-/* Button rows */
-#mvr-row-idle,
-#mvr-row-reading {
+.mvr-text-row {
+  padding: 0;
+}
+
+#mvr-text {
+  min-height: 0;
+  max-height: 36px;
+  padding: 3px 6px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 8px;
+  overflow-y: auto;
+  font-size: 9px;
+  line-height: 1.3;
+  color: #e5ecff;
+  white-space: pre-wrap;
+  max-width: 200px;
+}
+
+#mvr-text::-webkit-scrollbar { width: 2px; }
+#mvr-text::-webkit-scrollbar-track { background: transparent; }
+#mvr-text::-webkit-scrollbar-thumb { background: rgba(125, 211, 252, 0.3); border-radius: 4px; }
+
+/* ─── URL bar ─── */
+#mvr-url-bar {
+  font-size: 8px;
+  color: rgba(100,116,139,0.5);
+  padding: 0 10px;
+  margin-top: -2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  font-family: monospace;
+  letter-spacing: -0.3px;
+  line-height: 12px;
+  height: 12px;
+}
+
+/* ─── Buttons ─── */
+
+.mvr-actions {
   display: flex;
-  gap: 5px;
+  flex-direction: column;
+  gap: 3px;
 }
 
-/* Main action button */
-#mvr-go {
-  flex: 1;
-  padding: 7px;
-  border: none;
-  border-radius: 8px;
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-  background: linear-gradient(135deg, #e94560, #c22d4e);
-  color: #fff;
-  transition: all 0.15s;
-  box-shadow: 0 2px 6px rgba(233, 69, 96, 0.2);
+.mvr-actions > div {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
 }
-#mvr-go:hover {
-  filter: brightness(1.1);
-  box-shadow: 0 3px 10px rgba(233, 69, 96, 0.3);
-}
-#mvr-go:active { transform: scale(0.98); }
 
-/* Pause button */
-#mvr-pause {
-  width: 32px;
-  padding: 7px;
-  border: 1px solid rgba(255,255,255,0.1);
+#mvr-row-reading {
+  align-items: center;
+}
+
+.mvr-icon-pill {
+  width: 24px;
+  height: 24px;
   border-radius: 8px;
-  font-size: 12px;
-  cursor: pointer;
-  background: rgba(255,255,255,0.05);
-  color: #e0e0e8;
-  transition: all 0.15s;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: linear-gradient(135deg, rgba(125, 211, 252, 0.15), rgba(129, 140, 248, 0.15));
+  color: #e2e8f0;
   display: flex;
   align-items: center;
   justify-content: center;
-  line-height: 1;
-}
-#mvr-pause:hover { background: rgba(255,255,255,0.1); }
-#mvr-pause.active { background: rgba(233,69,96,0.15); border-color: rgba(233,69,96,0.3); color: #e94560; }
-
-/* Stop button */
-#mvr-stop {
-  flex: 1;
-  padding: 7px;
-  border: 1px solid rgba(255,255,255,0.08);
-  border-radius: 8px;
-  font-size: 11px;
-  font-weight: 600;
   cursor: pointer;
-  background: rgba(255,255,255,0.05);
-  color: #aaa;
-  transition: all 0.15s;
+  transition: transform 0.1s ease;
 }
-#mvr-stop:hover { background: rgba(255,255,255,0.1); color: #e0e0e8; }
 
-/* Text display */
-#mvr-text {
-  background: rgba(255,255,255,0.03);
-  border: 1px solid rgba(255,255,255,0.05);
-  border-radius: 6px;
-  padding: 5px 7px;
-  min-height: 20px;
-  max-height: 60px;
-  overflow-y: auto;
-  font-size: 10px;
-  line-height: 1.4;
-  white-space: pre-wrap;
-  user-select: text;
-  cursor: text;
-  color: rgba(255,255,255,0.7);
+.mvr-icon-pill svg {
+  width: 12px;
+  height: 12px;
 }
-#mvr-text::-webkit-scrollbar { width: 3px; }
-#mvr-text::-webkit-scrollbar-track { background: transparent; }
-#mvr-text::-webkit-scrollbar-thumb { background: rgba(233,69,96,0.25); border-radius: 2px; }
 
-/* Controls toggle */
-#mvr-controls-toggle {
-  background: none;
+.mvr-icon-pill:hover {
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.mvr-icon-pill:active {
+  transform: scale(0.93);
+}
+
+.mvr-icon-play { display: none; }
+#mvr-pause.active .mvr-icon-pause { display: none; }
+#mvr-pause.active .mvr-icon-play { display: block; }
+
+#mvr-go {
+  width: 28px;
+  height: 28px;
+  border-radius: 10px;
   border: none;
-  color: rgba(255,255,255,0.3);
-  font-size: 9px;
-  cursor: pointer;
-  padding: 2px 0;
-  text-align: center;
-  transition: color 0.15s;
+  background: linear-gradient(135deg, #7dd3fc, #818cf8);
+  color: #05070a;
+  box-shadow: 0 3px 10px rgba(20, 53, 113, 0.3);
 }
-#mvr-controls-toggle:hover { color: rgba(255,255,255,0.5); }
 
-/* Controls */
+#mvr-go:hover {
+  transform: scale(1.05);
+}
+
+/* ─── Settings panel: popup above the pill ─── */
+
+#mvr-controls-wrapper {
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  margin-top: 2px;
+  padding-top: 4px;
+}
+
 #mvr-controls {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding-top: 4px;
-  border-top: 1px solid rgba(255,255,255,0.04);
+  gap: 5px;
+  padding-bottom: 2px;
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition: max-height 0.2s ease, opacity 0.15s ease;
+  width: 180px;
 }
-#mvr-controls.collapsed { display: none; }
+
+#mvr-controls:not(.collapsed) {
+  max-height: 300px;
+  opacity: 1;
+}
+
 #mvr-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   font-size: 9px;
-  color: rgba(255,255,255,0.3);
+  letter-spacing: 0.2px;
+  color: rgba(226, 232, 240, 0.7);
+  text-transform: uppercase;
+}
+
+.mvr-label-title {
+  font-size: 8px;
+  letter-spacing: 0.3px;
+}
+
+.mvr-speed-row {
   display: flex;
   align-items: center;
   gap: 4px;
 }
-#mvr-controls select {
+
+#mvr-controls input[type='range'] {
   flex: 1;
-  background: rgba(255,255,255,0.06);
-  color: #ccc;
-  border: 1px solid rgba(255,255,255,0.06);
-  border-radius: 4px;
-  padding: 2px 4px;
-  font-size: 9px;
-  cursor: pointer;
-  outline: none;
-}
-#mvr-controls select:focus { border-color: rgba(233,69,96,0.3); }
-#mvr-controls input[type="range"] {
-  flex: 1;
-  accent-color: #e94560;
+  accent-color: #7dd3fc;
   height: 2px;
 }
-#mvr-controls input[type="checkbox"] {
-  accent-color: #e94560;
+
+#mvr-controls select {
+  background: rgba(255, 255, 255, 0.04);
+  color: #e2e8f0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  padding: 3px 5px;
+  font-size: 9px;
   cursor: pointer;
+  appearance: none;
+}
+
+#mvr-controls input[type='checkbox'] {
+  accent-color: #7dd3fc;
   width: 11px;
   height: 11px;
+  cursor: pointer;
 }
-#mvr-sv {
-  color: #e94560;
-  font-weight: 600;
+
+.mvr-checkbox {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 4px;
+}
+
+.mvr-checkbox span {
   font-size: 9px;
+  text-transform: none;
+}
+
+#mvr-sv {
+  font-weight: 700;
+  font-size: 9px;
+  color: #7dd3fc;
   min-width: 24px;
   text-align: right;
 }
-#mvr-auto-label { cursor: pointer; }
+
 #mvr-keys {
   font-size: 8px;
-  color: rgba(255,255,255,0.15);
+  color: rgba(226, 232, 240, 0.4);
   text-align: center;
-  margin-top: 1px;
+  letter-spacing: 0.2px;
 }

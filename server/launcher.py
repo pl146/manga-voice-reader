@@ -1,6 +1,6 @@
 """
-Tiny launcher service — uses almost zero resources.
-Listens on port 5056. When it gets a /start request, it launches the heavy server.
+MangaVoice — Tiny launcher service (uses almost zero resources).
+Listens on port 5056. Starts the heavy server on demand.
 Auto-starts with Windows via Task Scheduler.
 """
 import subprocess
@@ -35,13 +35,22 @@ def start_server():
         if is_server_running():
             return True
         try:
-            # Launch in a new visible console window
-            # Use python.exe explicitly (not pythonw.exe) so server has full console I/O
             python_exe = sys.executable.replace('pythonw', 'python') if 'pythonw' in sys.executable else sys.executable
+            env = os.environ.copy()
+            env['PYTHONIOENCODING'] = 'utf-8'
+            # Ensure Homebrew paths are in PATH (launchd doesn't inherit shell PATH)
+            brew_paths = '/opt/homebrew/bin:/usr/local/bin'
+            if brew_paths not in env.get('PATH', ''):
+                env['PATH'] = brew_paths + ':' + env.get('PATH', '/usr/bin:/bin')
+            # Use server_lite.py (ONNX-only, lightweight) as the default
+            server_script = os.path.join(SERVER_DIR, 'server_lite.py')
+            if not os.path.isfile(server_script):
+                server_script = os.path.join(SERVER_DIR, 'server.py')
             server_process = subprocess.Popen(
-                [python_exe, os.path.join(SERVER_DIR, 'server.py')],
+                [python_exe, server_script],
                 cwd=SERVER_DIR,
                 creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == 'nt' else 0,
+                env=env,
             )
             # Wait for it to start
             for _ in range(60):
@@ -54,29 +63,54 @@ def start_server():
             return False
 
 
+def stop_server():
+    """Stop the main server."""
+    global server_process
+    with server_lock:
+        try:
+            import urllib.request
+            urllib.request.urlopen(f'http://127.0.0.1:{SERVER_PORT}/shutdown', timeout=3)
+        except Exception:
+            pass
+        if server_process and server_process.poll() is None:
+            try:
+                server_process.kill()
+                server_process.wait(timeout=5)
+            except Exception:
+                pass
+        server_process = None
+        time.sleep(1)
+        return not is_server_running()
+
+
 class Handler(BaseHTTPRequestHandler):
+    def _respond(self, data):
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Access-Control-Allow-Origin', 'chrome-extension://*')
+        self.end_headers()
+        self.wfile.write(json.dumps(data).encode())
+
     def do_GET(self):
         if self.path == '/start':
             ok = start_server()
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(json.dumps({'ok': ok, 'server': f'http://127.0.0.1:{SERVER_PORT}'}).encode())
+            self._respond({'ok': ok, 'server': f'http://127.0.0.1:{SERVER_PORT}'})
+        elif self.path == '/stop':
+            ok = stop_server()
+            self._respond({'ok': ok})
+        elif self.path == '/restart':
+            stop_server()
+            ok = start_server()
+            self._respond({'ok': ok, 'server': f'http://127.0.0.1:{SERVER_PORT}'})
         elif self.path == '/status':
-            running = is_server_running()
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(json.dumps({'running': running}).encode())
+            self._respond({'running': is_server_running()})
         else:
             self.send_response(404)
             self.end_headers()
 
     def do_OPTIONS(self):
         self.send_response(200)
-        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Origin', 'chrome-extension://*')
         self.send_header('Access-Control-Allow-Methods', 'GET')
         self.end_headers()
 
@@ -85,8 +119,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == '__main__':
-    print(f'[LAUNCHER] Manga server launcher on port {PORT}')
-    print(f'[LAUNCHER] GET /start  → starts the heavy server')
-    print(f'[LAUNCHER] GET /status → checks if server is running')
-    httpd = HTTPServer(('0.0.0.0', PORT), Handler)
+    print(f'[LAUNCHER] MangaVoice launcher on port {PORT}')
+    print(f'[LAUNCHER] GET /start | /stop | /restart | /status')
+    httpd = HTTPServer(('127.0.0.1', PORT), Handler)
     httpd.serve_forever()

@@ -1,0 +1,19 @@
+# MangaVoice Lite — ONNX-only dependencies (no PyTorch/PaddlePaddle/Transformers)
+# Total venv: ~400-550 MB (vs 1.6 GB full server)
+
+flask>=3.0
+flask-cors>=5.0
+onnxruntime>=1.17
+opencv-python-headless>=4.9
+numpy
+Pillow
+
+# TTS
+kokoro-onnx>=0.4
+
+# OCR (Apple Vision primary, Tesseract fallback)
+pytesseract
+
+# Text processing (pure Python, small)
+symspellpy
+wordninja
